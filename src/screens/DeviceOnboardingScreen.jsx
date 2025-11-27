@@ -57,7 +57,7 @@ const DeviceOnboardingScreen = ({ navigation, setHasDevice }) => {
 
   const onSubmit = (data) => {
     setVerifying(true)
-    // Mock device verification - replace with actual Firebase verification later
+   
     setTimeout(() => {
       setVerifying(false)
       if (data.deviceId === "SS-1234-ABCD" || data.deviceId === "123456") {

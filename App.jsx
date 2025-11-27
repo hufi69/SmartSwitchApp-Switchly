@@ -27,6 +27,7 @@ import SafetyScreen from "./src/screens/SafetyScreen"
 import NotificationsScreen from "./src/screens/NotificationsScreen"
 import SettingsScreen from "./src/screens/SettingsScreen"
 import SmartChargingScreen from "./src/screens/SmartChargingScreen"
+import SupportChatbotScreen from "./src/screens/SupportChatbotScreen"
 
 const Stack = createStackNavigator()
 const Tab = createBottomTabNavigator()
@@ -324,6 +325,7 @@ export default function App() {
                     <Stack.Screen name="Notifications" component={NotificationsScreen} />
                     <Stack.Screen name="Settings" component={SettingsScreen} />
                     <Stack.Screen name="SmartCharging" component={SmartChargingScreen} />
+                    <Stack.Screen name="SupportChatbot" component={SupportChatbotScreen} />
                     <Stack.Screen name="Profile">
                       {(props) => <ProfileScreen {...props} setIsAuthenticated={setIsAuthenticated} />}
                     </Stack.Screen>

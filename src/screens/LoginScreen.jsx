@@ -14,7 +14,7 @@ import { TextInput, Button, Text, Checkbox } from "react-native-paper"
 import { useForm, Controller } from "react-hook-form"
 import { LinearGradient } from "expo-linear-gradient"
 import { MaterialCommunityIcons } from "@expo/vector-icons"
-import { signInWithEmailAndPassword } from "firebase/auth"
+import { signInWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth"
 import { auth } from "../config/firebase"
 import Toast from "../components/Toast"
 import { saveUserCredentials, getSavedCredentials } from "../utils/storage"
@@ -26,6 +26,9 @@ const LoginScreen = ({ navigation, setIsAuthenticated }) => {
   const [loading, setLoading] = useState(false)
   const [toast, setToast] = useState({ visible: false, message: "", type: "error" })
   const [rememberMe, setRememberMe] = useState(false)
+  const [forgotPasswordModal, setForgotPasswordModal] = useState(false)
+  const [resetEmail, setResetEmail] = useState("")
+  const [resetLoading, setResetLoading] = useState(false)
 
   const fadeAnim = useRef(new Animated.Value(0)).current
   const slideAnim = useRef(new Animated.Value(50)).current
@@ -143,6 +146,53 @@ const LoginScreen = ({ navigation, setIsAuthenticated }) => {
       }
 
       showToast(errorMessage, "error")
+    }
+  }
+
+  // Handle Forgot Password - 
+  const handleForgotPassword = async () => {
+    if (!resetEmail.trim()) {
+      showToast("Please enter your email address", "error")
+      return
+    }
+
+    const emailRegex = /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i
+    if (!emailRegex.test(resetEmail)) {
+      showToast("Please enter a valid email address", "error")
+      return
+    }
+
+    setResetLoading(true)
+    try {
+      // Use Firebase's sendPasswordResetEmail 
+      await sendPasswordResetEmail(auth, resetEmail)
+      
+      showToast(`Password reset email sent to ${resetEmail}`, "success")
+      setForgotPasswordModal(false)
+      setResetEmail("")
+      
+    } catch (error) {
+      console.error("Error sending reset email:", error)
+      let errorMessage = "Failed to send password reset email. Please try again."
+      
+      // Handle specific Firebase errors
+      switch (error.code) {
+        case "auth/user-not-found":
+          errorMessage = "No account found with this email address"
+          break
+        case "auth/invalid-email":
+          errorMessage = "Invalid email address"
+          break
+        case "auth/too-many-requests":
+          errorMessage = "Too many requests. Please try again later"
+          break
+        default:
+          errorMessage = error.message || errorMessage
+      }
+      
+      showToast(errorMessage, "error")
+    } finally {
+      setResetLoading(false)
     }
   }
 
@@ -297,7 +347,10 @@ const LoginScreen = ({ navigation, setIsAuthenticated }) => {
                   <Text style={styles.rememberMeText}>Remember me</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity style={styles.forgotPassword}>
+                <TouchableOpacity 
+                  style={styles.forgotPassword}
+                  onPress={() => setForgotPasswordModal(true)}
+                >
                   <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
                 </TouchableOpacity>
               </View>
@@ -329,6 +382,78 @@ const LoginScreen = ({ navigation, setIsAuthenticated }) => {
             type={toast.type}
             onDismiss={hideToast}
           />
+
+          {/* Forgot Password Modal */}
+          {forgotPasswordModal && (
+            <View style={styles.modalOverlay}>
+              <View style={styles.modalContainer}>
+                <View style={styles.modalHeader}>
+                  <Text style={styles.modalTitle}>Reset Password</Text>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setForgotPasswordModal(false)
+                      setResetEmail("")
+                    }}
+                  >
+                    <MaterialCommunityIcons name="close" size={24} color="#FFFFFF" />
+                  </TouchableOpacity>
+                </View>
+
+                <Text style={styles.modalSubtitle}>
+                  Enter your email address and we'll send you a verification code.
+                </Text>
+
+                <TextInput
+                  label="Email"
+                  placeholder="Enter your email"
+                  mode="outlined"
+                  left={<TextInput.Icon icon="email" />}
+                  style={styles.modalInput}
+                  value={resetEmail}
+                  onChangeText={setResetEmail}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  outlineColor="rgba(255,255,255,0.3)"
+                  activeOutlineColor="#4361EE"
+                  textColor="#FFFFFF"
+                  placeholderTextColor="rgba(255,255,255,0.5)"
+                  theme={{
+                    colors: {
+                      onSurfaceVariant: "#FFFFFF",
+                      placeholder: "rgba(255,255,255,0.5)",
+                      background: "transparent",
+                      surfaceVariant: "rgba(0, 0, 0, 0.6)",
+                      primary: "#FFFFFF",
+                    },
+                  }}
+                />
+
+                <View style={styles.modalButtons}>
+                  <Button
+                    mode="outlined"
+                    onPress={() => {
+                      setForgotPasswordModal(false)
+                      setResetEmail("")
+                    }}
+                    style={[styles.modalButton, styles.cancelButton]}
+                    textColor="#FFFFFF"
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    mode="contained"
+                    onPress={handleForgotPassword}
+                    style={[styles.modalButton, styles.sendButton]}
+                    loading={resetLoading}
+                    disabled={resetLoading}
+                    buttonColor="#4361EE"
+                  >
+                    Send Code
+                  </Button>
+                </View>
+              </View>
+            </View>
+          )}
         </KeyboardAvoidingView>
       </LinearGradient>
     </ImageBackground>
@@ -440,6 +565,65 @@ const styles = StyleSheet.create({
     color: "#CF6679",
     marginBottom: 10,
     marginLeft: 5,
+  },
+  modalOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0, 0, 0, 0.8)",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 1000,
+  },
+  modalContainer: {
+    width: "90%",
+    maxWidth: 400,
+    backgroundColor: "rgba(0, 0, 0, 0.95)",
+    borderRadius: 20,
+    padding: 24,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.5,
+    shadowRadius: 10,
+    elevation: 10,
+  },
+  modalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  modalTitle: {
+    fontSize: 24,
+    fontWeight: "bold",
+    color: "#FFFFFF",
+  },
+  modalSubtitle: {
+    fontSize: 14,
+    color: "rgba(255, 255, 255, 0.7)",
+    marginBottom: 20,
+    lineHeight: 20,
+  },
+  modalInput: {
+    marginBottom: 20,
+    backgroundColor: "rgba(0, 0, 0, 0.6)",
+  },
+  modalButtons: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  modalButton: {
+    flex: 1,
+    paddingVertical: 8,
+  },
+  cancelButton: {
+    borderColor: "rgba(255,255,255,0.3)",
+  },
+  sendButton: {
+    elevation: 3,
   },
 })
 

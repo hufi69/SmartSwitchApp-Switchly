@@ -392,7 +392,7 @@ const ProfileScreen = ({ navigation, setIsAuthenticated }) => {
             description="Get help and support"
             left={(props) => <List.Icon {...props} icon="help-circle" color="#4361EE" />}
             right={(props) => <List.Icon {...props} icon="chevron-right" />}
-            onPress={() => {}}
+            onPress={() => navigation.navigate("SupportChatbot")}
             style={styles.listItem}
           />
 
