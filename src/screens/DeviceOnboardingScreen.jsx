@@ -122,8 +122,8 @@ const DeviceOnboardingScreen = ({ navigation, setHasDevice }) => {
               <Text style={styles.title}>Connect Your Device</Text>
               <Text style={styles.subtitle}>
                 {currentStep === 1
-                  ? "Enter your Smart Switch device ID to connect it to your account"
-                  : "Connecting to your Smart Switch device"}
+                  ? "Enter your Switchly device ID to connect it to your account"
+                  : "Connecting to your Switchly device"}
               </Text>
             </Animated.View>
 
@@ -143,7 +143,7 @@ const DeviceOnboardingScreen = ({ navigation, setHasDevice }) => {
                       <Text style={styles.infoTitle}>Where to find your Device ID:</Text>
                       <View style={styles.infoItem}>
                         <MaterialCommunityIcons name="numeric-1-circle" size={24} color="#4361EE" />
-                        <Text style={styles.infoText}>Look at the back of your Smart Switch device</Text>
+                        <Text style={styles.infoText}>Look at the back of your Switchly device</Text>
                       </View>
                       <View style={styles.infoItem}>
                         <MaterialCommunityIcons name="numeric-2-circle" size={24} color="#4361EE" />
@@ -208,7 +208,7 @@ const DeviceOnboardingScreen = ({ navigation, setHasDevice }) => {
                 <View style={styles.connectionContainer}>
                   {!isConnected ? (
                     <>
-                      <Text style={styles.connectionText}>Connecting to your Smart Switch device...</Text>
+                      <Text style={styles.connectionText}>Connecting to your Switchly device...</Text>
                       <ProgressBar progress={connectionProgress} color="#4361EE" style={styles.progressBar} />
                       <View style={styles.connectionSteps}>
                         <Text style={[styles.connectionStep, connectionProgress >= 0.3 && styles.completedStep]}>

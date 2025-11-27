@@ -5,7 +5,7 @@ import { Alert } from 'react-native'
 
 export const showCustomAlert = (message, options = {}) => {
   const {
-    title = "SmartSwitchApp",
+    title = "Switchly",
     type = "info",
     showCancel = false,
     confirmText = "OK",

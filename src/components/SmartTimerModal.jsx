@@ -5,7 +5,7 @@ import {
   Modal,
   ScrollView,
   TouchableOpacity,
-  Platform,
+ 
 } from "react-native"
 import {
   Text,
@@ -52,10 +52,10 @@ const SmartTimerModal = ({ visible, onClose, onSave, existingTimers = [] }) => {
   const [alertVisible, setAlertVisible] = useState(false)
   const [alertConfig, setAlertConfig] = useState({})
   
-  // Smart scheduling options
-  const [scheduleType, setScheduleType] = useState('custom') // custom, sunrise, sunset, smart_scene
+ 
+  const [scheduleType, setScheduleType] = useState('custom') 
   const [selectedScene, setSelectedScene] = useState('work_mode')
-  const [dayType, setDayType] = useState('weekday') // weekday, weekend, holiday, all
+  const [dayType, setDayType] = useState(null) 
   const [enableRandom, setEnableRandom] = useState(false)
   const [sunriseTime, setSunriseTime] = useState(null)
   const [sunsetTime, setSunsetTime] = useState(null)
@@ -77,6 +77,60 @@ const SmartTimerModal = ({ visible, onClose, onSave, existingTimers = [] }) => {
     setSunriseTime(sunrise)
     setSunsetTime(sunset)
   }, [])
+
+  // Reset form when modal opens
+  useEffect(() => {
+    if (visible) {
+    
+      setTimerName("")
+      setScheduleType('custom')
+      setSelectedScene('work_mode')
+      setDayType(null) 
+      setEnableRandom(false)
+      setSelectedDays([]) 
+      setIsEnabled(false)
+      setStartTimeText("8:00")
+      setEndTimeText("5:00")
+      setStartTimePeriod("AM")
+      setEndTimePeriod("PM")
+      const defaultStart = new Date()
+      defaultStart.setHours(8, 0, 0, 0)
+      const defaultEnd = new Date()
+      defaultEnd.setHours(17, 0, 0, 0)
+      setStartTime(defaultStart)
+      setEndTime(defaultEnd)
+    }
+  }, [visible])
+
+ 
+  useEffect(() => {
+    if (scheduleType === 'custom' && dayType) {
+      let daysToSelect = []
+      
+      switch (dayType) {
+        case 'weekday':
+          // Monday to Friday (1-5)
+          daysToSelect = [1, 2, 3, 4, 5]
+          break
+        case 'weekend':
+          // Saturday and Sunday (6, 0)
+          daysToSelect = [6, 0]
+          break
+        case 'holiday':
+          // Sunday only (0)
+          daysToSelect = [0]
+          break
+        case 'all':
+          // All days (0-6)
+          daysToSelect = [0, 1, 2, 3, 4, 5, 6]
+          break
+        default:
+          daysToSelect = []
+      }
+      
+      setSelectedDays(daysToSelect)
+    }
+  }, [dayType, scheduleType])
 
   const formatTime = (date) => {
     return date.toLocaleTimeString("en-US", {
@@ -147,9 +201,9 @@ const SmartTimerModal = ({ visible, onClose, onSave, existingTimers = [] }) => {
   const handleSunriseSunsetSelection = (type) => {
     if (type === 'sunrise' && sunriseTime) {
       setStartTime(sunriseTime)
-      setEndTime(new Date(sunriseTime.getTime() + 2 * 60 * 60 * 1000)) // 2 hours after sunrise
+      setEndTime(new Date(sunriseTime.getTime() + 2 * 60 * 60 * 1000)) 
     } else if (type === 'sunset' && sunsetTime) {
-      setStartTime(new Date(sunsetTime.getTime() - 2 * 60 * 60 * 1000)) // 2 hours before sunset
+      setStartTime(new Date(sunsetTime.getTime() - 2 * 60 * 60 * 1000)) 
       setEndTime(sunsetTime)
     }
   }
@@ -159,8 +213,8 @@ const SmartTimerModal = ({ visible, onClose, onSave, existingTimers = [] }) => {
     if (scene) {
       setSelectedScene(sceneKey)
       setTimerName(scene.name)
-      // Set duration based on scene
-      const duration = scene.duration || 480 // Default 8 hours
+     
+      const duration = scene.duration || 480 
       const start = new Date()
       const end = new Date(start.getTime() + duration * 60 * 1000)
       setStartTime(start)
@@ -192,7 +246,7 @@ const SmartTimerModal = ({ visible, onClose, onSave, existingTimers = [] }) => {
       days: selectedDays.sort(),
       enabled: isEnabled,
       createdAt: new Date().toISOString(),
-      // Smart scheduling properties
+      
       scheduleType,
       dayType: scheduleType === 'custom' ? dayType : 'all',
       scene: scheduleType === 'smart_scene' ? selectedScene : null,
@@ -212,7 +266,7 @@ const SmartTimerModal = ({ visible, onClose, onSave, existingTimers = [] }) => {
     setTimerName("")
     setScheduleType('custom')
     setSelectedScene('work_mode')
-    setDayType('weekday')
+    setDayType(null) 
     setEnableRandom(false)
     setSelectedDays([])
     setIsEnabled(false)
@@ -312,22 +366,51 @@ const SmartTimerModal = ({ visible, onClose, onSave, existingTimers = [] }) => {
               </Card>
             )}
 
-            {/* Day Type Selection */}
+    
             {scheduleType === 'custom' && (
               <Card style={styles.card}>
                 <Card.Content>
                   <Text style={styles.sectionTitle}>Day Type</Text>
-                  <SegmentedButtons
-                    value={dayType}
-                    onValueChange={setDayType}
-                    buttons={[
-                      { value: 'weekday', label: 'Weekday' },
-                      { value: 'weekend', label: 'Weekend' },
-                      { value: 'holiday', label: 'Holiday' },
-                      { value: 'all', label: 'All Days' },
-                    ]}
-                    style={styles.segmentedButtons}
-                  />
+                  <View style={styles.dayTypeContainer}>
+                    {/* First Row */}
+                    <View style={styles.dayTypeRow}>
+                      <TouchableOpacity
+                        style={[styles.dayTypeButton, dayType === 'weekday' && styles.dayTypeButtonActive]}
+                        onPress={() => setDayType('weekday')}
+                      >
+                        <Text style={[styles.dayTypeButtonText, dayType === 'weekday' && styles.dayTypeButtonTextActive]}>
+                          Weekdays
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.dayTypeButton, dayType === 'weekend' && styles.dayTypeButtonActive]}
+                        onPress={() => setDayType('weekend')}
+                      >
+                        <Text style={[styles.dayTypeButtonText, dayType === 'weekend' && styles.dayTypeButtonTextActive]}>
+                          Weekends
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                    {/* Second Row */}
+                    <View style={styles.dayTypeRow}>
+                      <TouchableOpacity
+                        style={[styles.dayTypeButton, dayType === 'holiday' && styles.dayTypeButtonActive]}
+                        onPress={() => setDayType('holiday')}
+                      >
+                        <Text style={[styles.dayTypeButtonText, dayType === 'holiday' && styles.dayTypeButtonTextActive]}>
+                          Holiday
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.dayTypeButton, dayType === 'all' && styles.dayTypeButtonActive]}
+                        onPress={() => setDayType('all')}
+                      >
+                        <Text style={[styles.dayTypeButtonText, dayType === 'all' && styles.dayTypeButtonTextActive]}>
+                          All Days
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
                 </Card.Content>
               </Card>
             )}
@@ -387,102 +470,102 @@ const SmartTimerModal = ({ visible, onClose, onSave, existingTimers = [] }) => {
                   </View>
                 )}
                 
-                <View style={styles.timeRow}>
-                  <View style={styles.timeInput}>
-                    <Text style={styles.timeLabel}>Start Time</Text>
-                    <View style={styles.timeInputContainer}>
-                      <TextInput
-                        style={styles.timeTextInput}
-                        value={startTimeText}
-                        onChangeText={(text) => {
-                          setStartTimeText(text)
-                          updateStartTime(text, startTimePeriod)
+                {/* Start Time - Full Row */}
+                <View style={styles.timeInputFullRow}>
+                  <Text style={styles.timeLabel}>Start Time</Text>
+                  <View style={styles.timeInputContainer}>
+                    <TextInput
+                      style={styles.timeTextInput}
+                      value={startTimeText}
+                      onChangeText={(text) => {
+                        setStartTimeText(text)
+                        updateStartTime(text, startTimePeriod)
+                      }}
+                      placeholder="8:00"
+                      keyboardType="default"
+                      maxLength={5}
+                    />
+                    <View style={styles.periodContainer}>
+                      <TouchableOpacity
+                        style={[
+                          styles.periodButton,
+                          startTimePeriod === 'AM' && styles.periodButtonActive
+                        ]}
+                        onPress={() => {
+                          setStartTimePeriod('AM')
+                          updateStartTime(startTimeText, 'AM')
                         }}
-                        placeholder="8:00"
-                        keyboardType="numeric"
-                        maxLength={5}
-                      />
-                      <View style={styles.periodContainer}>
-                        <TouchableOpacity
-                          style={[
-                            styles.periodButton,
-                            startTimePeriod === 'AM' && styles.periodButtonActive
-                          ]}
-                          onPress={() => {
-                            setStartTimePeriod('AM')
-                            updateStartTime(startTimeText, 'AM')
-                          }}
-                        >
-                          <Text style={[
-                            styles.periodText,
-                            startTimePeriod === 'AM' && styles.periodTextActive
-                          ]}>AM</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          style={[
-                            styles.periodButton,
-                            startTimePeriod === 'PM' && styles.periodButtonActive
-                          ]}
-                          onPress={() => {
-                            setStartTimePeriod('PM')
-                            updateStartTime(startTimeText, 'PM')
-                          }}
-                        >
-                          <Text style={[
-                            styles.periodText,
-                            startTimePeriod === 'PM' && styles.periodTextActive
-                          ]}>PM</Text>
-                        </TouchableOpacity>
-                      </View>
+                      >
+                        <Text style={[
+                          styles.periodText,
+                          startTimePeriod === 'AM' && styles.periodTextActive
+                        ]}>AM</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[
+                          styles.periodButton,
+                          startTimePeriod === 'PM' && styles.periodButtonActive
+                        ]}
+                        onPress={() => {
+                          setStartTimePeriod('PM')
+                          updateStartTime(startTimeText, 'PM')
+                        }}
+                      >
+                        <Text style={[
+                          styles.periodText,
+                          startTimePeriod === 'PM' && styles.periodTextActive
+                        ]}>PM</Text>
+                      </TouchableOpacity>
                     </View>
                   </View>
+                </View>
 
-                  <View style={styles.timeInput}>
-                    <Text style={styles.timeLabel}>End Time</Text>
-                    <View style={styles.timeInputContainer}>
-                      <TextInput
-                        style={styles.timeTextInput}
-                        value={endTimeText}
-                        onChangeText={(text) => {
-                          setEndTimeText(text)
-                          updateEndTime(text, endTimePeriod)
+                {/* End Time - Full Row */}
+                <View style={styles.timeInputFullRow}>
+                  <Text style={styles.timeLabel}>End Time</Text>
+                  <View style={styles.timeInputContainer}>
+                    <TextInput
+                      style={styles.timeTextInput}
+                      value={endTimeText}
+                      onChangeText={(text) => {
+                        setEndTimeText(text)
+                        updateEndTime(text, endTimePeriod)
+                      }}
+                      placeholder="5:00"
+                      keyboardType="default"
+                      maxLength={5}
+                    />
+                    <View style={styles.periodContainer}>
+                      <TouchableOpacity
+                        style={[
+                          styles.periodButton,
+                          endTimePeriod === 'AM' && styles.periodButtonActive
+                        ]}
+                        onPress={() => {
+                          setEndTimePeriod('AM')
+                          updateEndTime(endTimeText, 'AM')
                         }}
-                        placeholder="5:00"
-                        keyboardType="numeric"
-                        maxLength={5}
-                      />
-                      <View style={styles.periodContainer}>
-                        <TouchableOpacity
-                          style={[
-                            styles.periodButton,
-                            endTimePeriod === 'AM' && styles.periodButtonActive
-                          ]}
-                          onPress={() => {
-                            setEndTimePeriod('AM')
-                            updateEndTime(endTimeText, 'AM')
-                          }}
-                        >
-                          <Text style={[
-                            styles.periodText,
-                            endTimePeriod === 'AM' && styles.periodTextActive
-                          ]}>AM</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          style={[
-                            styles.periodButton,
-                            endTimePeriod === 'PM' && styles.periodButtonActive
-                          ]}
-                          onPress={() => {
-                            setEndTimePeriod('PM')
-                            updateEndTime(endTimeText, 'PM')
-                          }}
-                        >
-                          <Text style={[
-                            styles.periodText,
-                            endTimePeriod === 'PM' && styles.periodTextActive
-                          ]}>PM</Text>
-                        </TouchableOpacity>
-                      </View>
+                      >
+                        <Text style={[
+                          styles.periodText,
+                          endTimePeriod === 'AM' && styles.periodTextActive
+                        ]}>AM</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[
+                          styles.periodButton,
+                          endTimePeriod === 'PM' && styles.periodButtonActive
+                        ]}
+                        onPress={() => {
+                          setEndTimePeriod('PM')
+                          updateEndTime(endTimeText, 'PM')
+                        }}
+                      >
+                        <Text style={[
+                          styles.periodText,
+                          endTimePeriod === 'PM' && styles.periodTextActive
+                        ]}>PM</Text>
+                      </TouchableOpacity>
                     </View>
                   </View>
                 </View>
@@ -594,6 +677,37 @@ const styles = StyleSheet.create({
   segmentedButtons: {
     marginBottom: 8,
   },
+  dayTypeContainer: {
+    marginTop: 8,
+    gap: 8,
+  },
+  dayTypeRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  dayTypeButton: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    backgroundColor: '#F5F5F5',
+    borderWidth: 1.5,
+    borderColor: '#E0E0E0',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dayTypeButtonActive: {
+    backgroundColor: '#4361EE',
+    borderColor: '#4361EE',
+  },
+  dayTypeButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#666666',
+  },
+  dayTypeButtonTextActive: {
+    color: '#FFFFFF',
+  },
   sceneItem: {
     flexDirection: "row",
     alignItems: "center",
@@ -639,6 +753,9 @@ const styles = StyleSheet.create({
   timeInput: {
     flex: 1,
   },
+  timeInputFullRow: {
+    marginBottom: 16,
+  },
   timeLabel: {
     fontSize: 14,
     color: "#666666",
@@ -647,28 +764,31 @@ const styles = StyleSheet.create({
   timeInputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F8F9FA',
+    backgroundColor: 'transparent',
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#E0E0E0',
-    padding: 4,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    height: 48,
   },
   timeTextInput: {
     flex: 1,
-    fontSize: 16,
-    color: '#4361EE',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    fontSize: 18,
+    color: '#212121',
+    paddingHorizontal: 8,
+    paddingVertical: 0,
     textAlign: 'center',
-    fontWeight: '500',
+    fontWeight: '600',
+    backgroundColor: 'transparent',
   },
   periodContainer: {
     flexDirection: 'row',
     marginLeft: 8,
   },
   periodButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
     borderRadius: 6,
     marginHorizontal: 2,
     backgroundColor: '#E0E0E0',

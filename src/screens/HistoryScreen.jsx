@@ -3,8 +3,8 @@ import { View, StyleSheet, ScrollView, Dimensions, StatusBar, TouchableOpacity, 
 import { Text, Card, Button, Appbar, SegmentedButtons, IconButton, Chip, List } from "react-native-paper"
 import { MaterialCommunityIcons } from "@expo/vector-icons"
 import { BarChart, LineChart } from "react-native-chart-kit"
-import { realtimeDb } from "../config/firebase"
-import { ref, onValue } from "firebase/database"
+import { realtimeDb, auth } from "../config/firebase"
+import { ref, onValue, set } from "firebase/database"
 import { calculateLESCOCost, formatCurrency, getTierInfo } from "../utils/lescoRates"
 import CustomAlert from "../components/CustomAlert"
 import * as Print from 'expo-print'
@@ -26,35 +26,64 @@ const HistoryScreen = ({ navigation }) => {
   const [alertVisible, setAlertVisible] = useState(false)
   const [alertConfig, setAlertConfig] = useState({})
 
+  // Load user's historical data from Firebase - Real-time updates
   useEffect(() => {
-    // Listen to power data for history tracking
-    const powerRef = ref(realtimeDb, 'power')
-    const listener = onValue(powerRef, (snapshot) => {
-      const power = snapshot.val()
-      if (power !== null) {
-        updateUsageData(power)
+    const userId = auth.currentUser?.uid
+    if (!userId) return
+
+    console.log('📜 Loading usage history for user:', userId)
+
+    const historyRef = ref(realtimeDb, `users/${userId}/usageHistory`)
+    const listener = onValue(historyRef, (snapshot) => {
+      const data = snapshot.val()
+      if (data) {
+        // Convert Firebase data to array and sort by time (newest first)
+        const historyArray = Object.keys(data)
+          .map(key => {
+            const item = data[key]
+            // Parse timestamp - item.timestamp is always stored as ISO string
+            let time
+            if (item.timestamp) {
+              time = new Date(item.timestamp)
+            } else {
+              // Fallback: try to parse the key (for old data or edge cases)
+              time = new Date()
+            }
+            
+            return {
+              time,
+              power: item.power || 0,
+              energy: item.energy || 0,
+              voltage: item.voltage || 0,
+              current: item.current || 0,
+              timestamp: item.timestamp || key
+            }
+          })
+          .sort((a, b) => b.time - a.time) // Sort newest first
+        
+        setUsageData(historyArray)
+        console.log(`✅ Loaded ${historyArray.length} usage records`)
+      } else {
+        setUsageData([])
+        console.log('📭 No usage history found')
       }
     })
 
     return () => listener()
   }, [])
 
-  const updateUsageData = (power) => {
-    const now = new Date()
-    const energyInKWh = (power / 1000) * (1 / 3600) // Convert to kWh for 1 second
 
-    setUsageData(prev => {
-      const updated = [...prev, { time: now, power, energy: energyInKWh }]
-      // Keep last 365 days for history
-      const oneYearAgo = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000)
-      return updated.filter(item => item.time > oneYearAgo)
-    })
-  }
 
-  // Process data for different time periods
   useEffect(() => {
     if (usageData.length > 0) {
       processHistoryData()
+    } else {
+      // Clear history if no data
+      setHistoryData({
+        daily: [],
+        weekly: [],
+        monthly: []
+      })
     }
   }, [usageData, processHistoryData])
 
@@ -64,60 +93,113 @@ const HistoryScreen = ({ navigation }) => {
     const weeklyData = []
     const monthlyData = []
 
-    // Process daily data (last 30 days)
-    for (let i = 29; i >= 0; i--) {
-      const dayAgo = new Date(now.getTime() - i * 24 * 60 * 60 * 1000)
-      const dayData = usageData.filter(item =>
-        item.time.toDateString() === dayAgo.toDateString()
-      )
-      const totalEnergy = dayData.reduce((sum, item) => sum + item.energy, 0)
-      const costData = calculateLESCOCost(totalEnergy)
-      
-      dailyData.push({
-        date: dayAgo,
-        usage: totalEnergy,
-        cost: costData.totalCost,
-        tier: getTierInfo(totalEnergy)
-      })
+    if (usageData.length === 0) {
+      setHistoryData({ daily: [], weekly: [], monthly: [] })
+      return
     }
 
-    // Process weekly data (last 12 weeks)
-    for (let i = 11; i >= 0; i--) {
-      const weekStart = new Date(now.getTime() - i * 7 * 24 * 60 * 60 * 1000)
-      const weekEnd = new Date(weekStart.getTime() + 7 * 24 * 60 * 60 * 1000)
-      const weekData = usageData.filter(item =>
-        item.time >= weekStart && item.time < weekEnd
-      )
-      const totalEnergy = weekData.reduce((sum, item) => sum + item.energy, 0)
-      const costData = calculateLESCOCost(totalEnergy)
-      
-      weeklyData.push({
-        week: `Week ${12-i}`,
-        startDate: weekStart,
-        usage: totalEnergy,
-        cost: costData.totalCost,
-        tier: getTierInfo(totalEnergy)
-      })
-    }
+    // Process daily data - Group by date and sum energy
+    const dailyMap = new Map()
+    usageData.forEach(item => {
+      const dateKey = item.time.toDateString()
+      if (!dailyMap.has(dateKey)) {
+        dailyMap.set(dateKey, { energy: 0, power: [] })
+      }
+      const dayData = dailyMap.get(dateKey)
+      dayData.energy += item.energy || 0
+      if (item.power) dayData.power.push(item.power)
+    })
 
-    // Process monthly data (last 12 months)
-    for (let i = 11; i >= 0; i--) {
-      const monthStart = new Date(now.getFullYear(), now.getMonth() - i, 1)
-      const monthEnd = new Date(now.getFullYear(), now.getMonth() - i + 1, 1)
-      const monthData = usageData.filter(item =>
-        item.time >= monthStart && item.time < monthEnd
-      )
-      const totalEnergy = monthData.reduce((sum, item) => sum + item.energy, 0)
-      const costData = calculateLESCOCost(totalEnergy)
+    // Convert daily map to array
+    dailyMap.forEach((data, dateString) => {
+      if (data.energy > 0) {
+        const costData = calculateLESCOCost(data.energy)
+        const sanitizedTier = {
+          ...getTierInfo(data.energy),
+          maxUnits: getTierInfo(data.energy).maxUnits === Infinity ? null : getTierInfo(data.energy).maxUnits
+        }
+        dailyData.push({
+          date: new Date(dateString),
+          usage: data.energy,
+          cost: costData.totalCost,
+          tier: sanitizedTier
+        })
+      }
+    })
+
+    // Sort daily data by date (newest first)
+    dailyData.sort((a, b) => b.date - a.date)
+
+    // Process weekly data - Group by week
+    const weeklyMap = new Map()
+    usageData.forEach(item => {
+      const weekStart = new Date(item.time)
+      weekStart.setDate(weekStart.getDate() - weekStart.getDay()) // Start of week (Sunday)
+      weekStart.setHours(0, 0, 0, 0)
+      const weekKey = weekStart.toISOString()
       
-      monthlyData.push({
-        month: monthStart.toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
-        startDate: monthStart,
-        usage: totalEnergy,
-        cost: costData.totalCost,
-        tier: getTierInfo(totalEnergy)
-      })
-    }
+      if (!weeklyMap.has(weekKey)) {
+        weeklyMap.set(weekKey, { energy: 0, startDate: weekStart })
+      }
+      const weekData = weeklyMap.get(weekKey)
+      weekData.energy += item.energy || 0
+    })
+
+    // Convert weekly map to array
+    let weekIndex = 0
+    weeklyMap.forEach((data, weekKey) => {
+      if (data.energy > 0) {
+        const costData = calculateLESCOCost(data.energy)
+        const sanitizedTier = {
+          ...getTierInfo(data.energy),
+          maxUnits: getTierInfo(data.energy).maxUnits === Infinity ? null : getTierInfo(data.energy).maxUnits
+        }
+        weeklyData.push({
+          week: `Week ${++weekIndex}`,
+          startDate: data.startDate,
+          usage: data.energy,
+          cost: costData.totalCost,
+          tier: sanitizedTier
+        })
+      }
+    })
+
+    // Sort weekly data by start date (newest first)
+    weeklyData.sort((a, b) => b.startDate - a.startDate)
+
+    // Process monthly data - Group by month
+    const monthlyMap = new Map()
+    usageData.forEach(item => {
+      const monthStart = new Date(item.time.getFullYear(), item.time.getMonth(), 1)
+      const monthKey = monthStart.toISOString()
+      
+      if (!monthlyMap.has(monthKey)) {
+        monthlyMap.set(monthKey, { energy: 0, startDate: monthStart })
+      }
+      const monthData = monthlyMap.get(monthKey)
+      monthData.energy += item.energy || 0
+    })
+
+    // Convert monthly map to array
+    monthlyMap.forEach((data, monthKey) => {
+      if (data.energy > 0) {
+        const costData = calculateLESCOCost(data.energy)
+        const sanitizedTier = {
+          ...getTierInfo(data.energy),
+          maxUnits: getTierInfo(data.energy).maxUnits === Infinity ? null : getTierInfo(data.energy).maxUnits
+        }
+        monthlyData.push({
+          month: data.startDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
+          startDate: data.startDate,
+          usage: data.energy,
+          cost: costData.totalCost,
+          tier: sanitizedTier
+        })
+      }
+    })
+
+    // Sort monthly data by start date (newest first)
+    monthlyData.sort((a, b) => b.startDate - a.startDate)
 
     setHistoryData({ daily: dailyData, weekly: weeklyData, monthly: monthlyData })
   }, [usageData])
@@ -129,29 +211,42 @@ const HistoryScreen = ({ navigation }) => {
   const getChartData = () => {
     const data = getCurrentData()
     
-    if (selectedPeriod === 'daily') {
+    if (data.length === 0) {
+      // Return empty chart data
       return {
-        labels: data.map(item => item.date.getDate().toString()).filter((_, i) => i % 5 === 0),
+        labels: ['No Data'],
         datasets: [{
-          data: data.map(item => item.cost).filter((_, i) => i % 5 === 0),
+          data: [0],
+          color: () => "#4361EE",
+          strokeWidth: 2,
+        }]
+      }
+    }
+    
+    if (selectedPeriod === 'daily') {
+      const filteredData = data.filter((_, i) => i % 5 === 0)
+      return {
+        labels: filteredData.map(item => item.date.getDate().toString()),
+        datasets: [{
+          data: filteredData.map(item => item.cost || 0),
           color: () => "#4361EE",
           strokeWidth: 2,
         }]
       }
     } else if (selectedPeriod === 'weekly') {
       return {
-        labels: data.map(item => item.week),
+        labels: data.map(item => item.week || 'Week'),
         datasets: [{
-          data: data.map(item => item.cost),
+          data: data.map(item => item.cost || 0),
           color: () => "#4361EE",
           strokeWidth: 2,
         }]
       }
     } else {
       return {
-        labels: data.map(item => item.month),
+        labels: data.map(item => item.month || 'Month'),
         datasets: [{
-          data: data.map(item => item.cost),
+          data: data.map(item => item.cost || 0),
           color: () => "#4361EE",
           strokeWidth: 2,
         }]
@@ -161,11 +256,17 @@ const HistoryScreen = ({ navigation }) => {
 
   const getTotalStats = () => {
     const data = getCurrentData()
-    const totalUsage = data.reduce((sum, item) => sum + item.usage, 0)
-    const totalCost = data.reduce((sum, item) => sum + item.cost, 0)
-    const avgDailyCost = selectedPeriod === 'daily' ? totalCost / data.length : totalCost / (data.length * 7)
+    const totalUsage = data.reduce((sum, item) => sum + (item.usage || 0), 0)
+    const totalCost = data.reduce((sum, item) => sum + (item.cost || 0), 0)
+    const avgDailyCost = data.length > 0 
+      ? (selectedPeriod === 'daily' ? totalCost / data.length : totalCost / (data.length * 7))
+      : 0
     
-    return { totalUsage, totalCost, avgDailyCost }
+    return { 
+      totalUsage: totalUsage || 0, 
+      totalCost: totalCost || 0, 
+      avgDailyCost: isNaN(avgDailyCost) ? 0 : avgDailyCost 
+    }
   }
 
   const showAlert = (message, type = 'info', onConfirm) => {
@@ -194,7 +295,7 @@ const HistoryScreen = ({ navigation }) => {
         <html>
         <head>
           <meta charset="utf-8">
-          <title>Smart Switch History Report</title>
+          <title>Switchly History Report</title>
           <style>
             body { font-family: Arial, sans-serif; margin: 20px; }
             .header { text-align: center; margin-bottom: 30px; }
@@ -208,7 +309,7 @@ const HistoryScreen = ({ navigation }) => {
         </head>
         <body>
           <div class="header">
-            <h1>Smart Switch History Report</h1>
+            <h1>Switchly History Report</h1>
             <p>Generated: ${now.toLocaleString()}</p>
             <p>Period: ${selectedPeriod.toUpperCase()}</p>
           </div>
@@ -269,7 +370,7 @@ const HistoryScreen = ({ navigation }) => {
       const stats = getTotalStats()
       const now = new Date()
       
-      const csv = `Smart Switch History Report
+      const csv = `Switchly History Report
 Period: ${selectedPeriod.toUpperCase()}
 Generated: ${now.toLocaleString()}
 
@@ -301,7 +402,6 @@ ${data.map(item => `${selectedPeriod === 'daily' ? item.date.toLocaleDateString(
       <StatusBar barStyle="light-content" backgroundColor="#4361EE" />
 
       <Appbar.Header style={styles.header}>
-        <Appbar.BackAction onPress={() => navigation.goBack()} color="#FFFFFF" />
         <Appbar.Content title="Usage History" titleStyle={styles.headerTitle} />
         <IconButton icon="file-download" iconColor="#FFFFFF" onPress={generateDetailedReport} />
       </Appbar.Header>
@@ -355,14 +455,30 @@ ${data.map(item => `${selectedPeriod === 'daily' ? item.date.toLocaleDateString(
                 width={width - 60}
                 height={220}
                 chartConfig={{
-                  backgroundColor: "#4361EE",
-                  backgroundGradientFrom: "#4361EE",
-                  backgroundGradientTo: "#3F37C9",
+                  backgroundColor: "#FFFFFF",
+                  backgroundGradientFrom: "#FFFFFF",
+                  backgroundGradientTo: "#F8F9FA",
                   decimalPlaces: 2,
-                  color: (opacity = 1) => `rgba(255, 255, 255, ${opacity})`,
-                  labelColor: (opacity = 1) => `rgba(255, 255, 255, ${opacity})`,
+                  color: (opacity = 1) => "#4361EE",
+                  labelColor: (opacity = 1) => "#757575",
                   style: { borderRadius: 16 },
+                  barPercentage: 0.7,
+                  fillShadowGradient: "#4361EE",
+                  fillShadowGradientOpacity: 0.9,
+                  propsForBackgroundLines: {
+                    strokeDasharray: "2,2",
+                    stroke: "#E0E0E0",
+                    strokeWidth: 1,
+                  },
+                  propsForLabels: {
+                    fontSize: 11,
+                    fontWeight: '500',
+                  },
                 }}
+                showValuesOnTopOfBars
+                withInnerLines={true}
+                withVerticalLabels={true}
+                withHorizontalLabels={true}
                 style={styles.chart}
               />
             </View>
@@ -387,7 +503,7 @@ ${data.map(item => `${selectedPeriod === 'daily' ? item.date.toLocaleDateString(
                   )}
                   left={() => (
                     <MaterialCommunityIcons 
-                      name="lightning-bolt" 
+                      name="chart-line" 
                       size={24} 
                       color="#4361EE" 
                     />
@@ -399,7 +515,7 @@ ${data.map(item => `${selectedPeriod === 'daily' ? item.date.toLocaleDateString(
               <View style={styles.emptyState}>
                 <MaterialCommunityIcons name="chart-line" size={48} color="#CCCCCC" />
                 <Text style={styles.emptyText}>No data available</Text>
-                <Text style={styles.emptySubtext}>Start using your smart switch to see history</Text>
+                <Text style={styles.emptySubtext}>Start using Switchly to see history</Text>
               </View>
             )}
           </Card.Content>

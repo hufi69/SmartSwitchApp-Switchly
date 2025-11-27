@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from "react"
-import { View, StyleSheet, ScrollView, StatusBar, TouchableOpacity, Dimensions, Alert } from "react-native"
-import { Text, Card, Button, Appbar, IconButton, Chip, ProgressBar, FAB } from "react-native-paper"
+import { View, StyleSheet, ScrollView, StatusBar, TouchableOpacity, Dimensions, Alert, Modal } from "react-native"
+import { Text, Card, Button, Appbar, IconButton, Chip, ProgressBar, FAB, TextInput } from "react-native-paper"
 import { MaterialCommunityIcons } from "@expo/vector-icons"
-import { realtimeDb } from "../config/firebase"
+import { realtimeDb, auth } from "../config/firebase"
 import { ref, onValue, set } from "firebase/database"
 import CustomAlert from "../components/CustomAlert"
 import {
@@ -33,6 +33,15 @@ const SafetyScreen = ({ navigation }) => {
   const [isEmergencyMode, setIsEmergencyMode] = useState(false)
   const [alertVisible, setAlertVisible] = useState(false)
   const [alertConfig, setAlertConfig] = useState({})
+  const [showBudgetConfig, setShowBudgetConfig] = useState(false)
+  const [energyBudget, setEnergyBudget] = useState({
+    dailyLimit: 10,
+    warningThreshold: 80,
+    currentUsage: 0,
+  })
+  const [budgetLimit, setBudgetLimit] = useState("10")
+  const [budgetThreshold, setBudgetThreshold] = useState("80")
+  const [savingBudget, setSavingBudget] = useState(false)
 
   useEffect(() => {
     // Listen to power data
@@ -95,6 +104,28 @@ const SafetyScreen = ({ navigation }) => {
     }
   }, [powerData, lastUpdate, isEmergencyMode])
 
+  // Load energy budget from Firebase
+  useEffect(() => {
+    const userId = auth.currentUser?.uid
+    if (!userId) return
+
+    const budgetRef = ref(realtimeDb, `users/${userId}/energySettings`)
+    const listener = onValue(budgetRef, (snapshot) => {
+      const data = snapshot.val()
+      if (data) {
+        setEnergyBudget({
+          dailyLimit: data.dailyLimit || 10,
+          warningThreshold: data.warningThreshold || 80,
+          currentUsage: data.currentUsage || 0,
+        })
+        setBudgetLimit(String(data.dailyLimit || 10))
+        setBudgetThreshold(String(data.warningThreshold || 80))
+      }
+    })
+
+    return () => listener()
+  }, [])
+
   const showAlert = (message, type = 'info', onConfirm) => {
     setAlertConfig({
       message,
@@ -102,6 +133,45 @@ const SafetyScreen = ({ navigation }) => {
       onConfirm: onConfirm || (() => setAlertVisible(false))
     })
     setAlertVisible(true)
+  }
+
+  const handleSaveBudget = async () => {
+    const limit = parseFloat(budgetLimit)
+    const threshold = parseFloat(budgetThreshold)
+
+    if (isNaN(limit) || limit <= 0) {
+      showAlert('Please enter a valid daily limit', 'error')
+      return
+    }
+
+    if (isNaN(threshold) || threshold < 0 || threshold > 100) {
+      showAlert('Threshold must be between 0-100%', 'error')
+      return
+    }
+
+    setSavingBudget(true)
+    try {
+      const userId = auth.currentUser?.uid
+      if (!userId) throw new Error('No user ID')
+
+      const budgetData = {
+        dailyLimit: limit,
+        warningThreshold: threshold,
+        currentUsage: energyBudget.currentUsage,
+        lastUpdated: new Date().toISOString(),
+      }
+
+      await set(ref(realtimeDb, `users/${userId}/energySettings`), budgetData)
+      
+      setShowBudgetConfig(false)
+      showAlert('Energy budget saved successfully!', 'success')
+      console.log(`✅ Energy budget saved for user ${userId}`)
+    } catch (error) {
+      console.error('Error saving budget:', error)
+      showAlert('Failed to save budget settings', 'error')
+    } finally {
+      setSavingBudget(false)
+    }
   }
 
   const handleEmergencyShutdown = async () => {
@@ -118,20 +188,14 @@ const SafetyScreen = ({ navigation }) => {
 
   const executeEmergencyShutdown = async () => {
     try {
-      // Turn off all devices
-      const shutdownCommand = getEmergencyShutdownCommand()
+      // Turn off relay only - this will cut power supply
+      await set(ref(realtimeDb, 'relay'), 'off')
+      console.log('✅ Emergency shutdown: Relay turned OFF - Power supply cut')
       
-      // Update all device statuses to off
-      const promises = Object.entries(shutdownCommand.devices).map(([deviceId, status]) =>
-        set(ref(realtimeDb, `devices/${deviceId}/status`), status)
-      )
-      
-      await Promise.all(promises)
-      
-      showAlert('Emergency shutdown completed. All devices turned off for safety.', 'success')
+      showAlert('Emergency shutdown completed. Power supply cut for safety.', 'success')
     } catch (error) {
       console.error('Emergency shutdown error:', error)
-      showAlert('Emergency shutdown failed. Please manually turn off all devices.', 'error')
+      showAlert('Emergency shutdown failed. Please manually turn off the switch.', 'error')
     }
   }
 
@@ -160,7 +224,6 @@ const SafetyScreen = ({ navigation }) => {
       <StatusBar barStyle="light-content" backgroundColor="#4361EE" />
       
       <Appbar.Header style={styles.header}>
-        <Appbar.BackAction onPress={() => navigation.goBack()} color="#FFFFFF" />
         <Appbar.Content title="Safety Dashboard" titleStyle={styles.headerTitle} />
         <IconButton 
           icon="refresh" 
@@ -169,7 +232,11 @@ const SafetyScreen = ({ navigation }) => {
         />
       </Appbar.Header>
 
-      <ScrollView style={styles.scrollView}>
+      <ScrollView 
+        style={styles.scrollView} 
+        contentContainerStyle={{ paddingTop: 20, paddingBottom: 140 }}
+        showsVerticalScrollIndicator={false}
+      >
         {/* Emergency Status Card */}
         <Card style={[styles.statusCard, { borderColor: getStatusColor() }]}>
           <Card.Content style={styles.statusContent}>
@@ -207,7 +274,7 @@ const SafetyScreen = ({ navigation }) => {
         </Card>
 
         {/* Real-time Monitoring */}
-        <Card style={styles.monitoringCard}>
+        <Card style={styles.card}>
           <Card.Content>
             <Text style={styles.cardTitle}>Real-time Monitoring</Text>
             
@@ -215,7 +282,7 @@ const SafetyScreen = ({ navigation }) => {
               {/* Voltage */}
               <View style={styles.metricItem}>
                 <View style={styles.metricHeader}>
-                  <MaterialCommunityIcons name="lightning-bolt" size={20} color="#4361EE" />
+                  <MaterialCommunityIcons name="flash" size={20} color="#4361EE" />
                   <Text style={styles.metricLabel}>Voltage</Text>
                 </View>
                 <Text style={styles.metricValue}>{powerData.voltage.toFixed(1)}V</Text>
@@ -285,71 +352,88 @@ const SafetyScreen = ({ navigation }) => {
           </Card.Content>
         </Card>
 
-        {/* Safety Recommendations */}
-        <Card style={styles.recommendationsCard}>
+
+        {/* Energy Budget (FR09) */}
+        <Card style={styles.energyBudgetCard}>
           <Card.Content>
-            <Text style={styles.cardTitle}>Safety Recommendations</Text>
+            <View style={styles.cardHeader}>
+              <MaterialCommunityIcons name="chart-donut" size={24} color="#4361EE" />
+              <Text style={styles.cardTitle}>Energy Budget</Text>
+            </View>
             
-            {recommendations.map((rec, index) => (
-              <View key={index} style={styles.recommendationItem}>
-                <View style={styles.recommendationHeader}>
-                  <Chip 
-                    style={[
-                      styles.priorityChip,
-                      { backgroundColor: rec.priority === 'HIGH' ? '#F44336' : 
-                                        rec.priority === 'MEDIUM' ? '#FF9800' : '#4CAF50' }
-                    ]}
-                    textStyle={styles.priorityText}
-                  >
-                    {rec.priority}
-                  </Chip>
-                </View>
-                <Text style={styles.recommendationMessage}>{rec.message}</Text>
-                <Text style={styles.recommendationAction}>{rec.action}</Text>
+            <View style={styles.budgetContainer}>
+              <Text style={styles.budgetLabel}>Daily Limit: {energyBudget.dailyLimit} kWh</Text>
+              <Text style={styles.budgetSubLabel}>Warning at {energyBudget.warningThreshold}%</Text>
+              
+              <ProgressBar 
+                progress={energyBudget.currentUsage / energyBudget.dailyLimit} 
+                color={
+                  (energyBudget.currentUsage / energyBudget.dailyLimit) >= (energyBudget.warningThreshold / 100)
+                    ? '#F44336'
+                    : '#4361EE'
+                }
+                style={styles.progressBar}
+              />
+              
+              <View style={styles.usageStats}>
+                <Text style={styles.usageText}>
+                  {energyBudget.currentUsage.toFixed(2)} kWh used
+                </Text>
+                <Text style={styles.usageText}>
+                  {(energyBudget.dailyLimit - energyBudget.currentUsage).toFixed(2)} kWh remaining
+                </Text>
               </View>
-            ))}
+              
+              <Button
+                mode="contained"
+                icon="cog"
+                onPress={() => setShowBudgetConfig(true)}
+                style={styles.configButton}
+                buttonColor="#4361EE"
+              >
+                Configure Budget
+              </Button>
+            </View>
           </Card.Content>
         </Card>
 
-        {/* Emergency Controls */}
-        <Card style={styles.emergencyCard}>
-          <Card.Content>
-            <Text style={styles.cardTitle}>Emergency Controls</Text>
-            
-            {isEmergencyMode ? (
-              <View style={styles.emergencyModeContainer}>
-                <MaterialCommunityIcons name="alert-octagon" size={48} color="#F44336" />
-                <Text style={styles.emergencyModeText}>EMERGENCY MODE ACTIVE</Text>
-                <Text style={styles.emergencyModeSubtext}>
-                  All devices are shut down for safety. Reset when safe to continue.
-                </Text>
-                <Button
-                  mode="contained"
-                  onPress={resetEmergencyMode}
-                  style={styles.resetButton}
-                  buttonColor="#4CAF50"
-                >
-                  Reset Emergency Mode
-                </Button>
-              </View>
-            ) : (
-              <View style={styles.emergencyControlsContainer}>
-                <Button
-                  mode="contained"
-                  icon="power-off"
-                  onPress={handleManualEmergencyShutdown}
-                  style={styles.emergencyButton}
-                  buttonColor="#F44336"
-                >
-                  Emergency Shutdown
-                </Button>
-                <Text style={styles.emergencyWarning}>
-                  Use only in case of electrical emergency
-                </Text>
-              </View>
-            )}
-          </Card.Content>
-        </Card>
+        {/* Emergency Controls - No Card */}
+        <View style={styles.emergencySection}>
+          <Text style={styles.emergencySectionTitle}>Emergency Controls</Text>
+          
+          {isEmergencyMode ? (
+            <View style={styles.emergencyModeContainer}>
+              <MaterialCommunityIcons name="alert-octagon" size={48} color="#F44336" />
+              <Text style={styles.emergencyModeText}>EMERGENCY MODE ACTIVE</Text>
+              <Text style={styles.emergencyModeSubtext}>
+                All devices are shut down for safety. Reset when safe to continue.
+              </Text>
+              <Button
+                mode="contained"
+                onPress={resetEmergencyMode}
+                style={styles.resetButton}
+                buttonColor="#4CAF50"
+              >
+                Reset Emergency Mode
+              </Button>
+            </View>
+          ) : (
+            <View style={styles.emergencyControlsContainer}>
+              <Button
+                mode="contained"
+                icon="power-off"
+                onPress={handleManualEmergencyShutdown}
+                style={styles.emergencyButton}
+                buttonColor="#F44336"
+              >
+                Emergency Shutdown
+              </Button>
+              <Text style={styles.emergencyWarning}>
+                Use only in case of electrical emergency
+              </Text>
+            </View>
+          )}
+        </View>
       </ScrollView>
 
       {/* Emergency FAB */}
@@ -361,6 +445,79 @@ const SafetyScreen = ({ navigation }) => {
           label="Emergency"
         />
       )}
+
+      {/* Configure Budget Modal */}
+      <Modal
+        visible={showBudgetConfig}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowBudgetConfig(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Configure Energy Budget</Text>
+              <TouchableOpacity onPress={() => setShowBudgetConfig(false)}>
+                <MaterialCommunityIcons name="close" size={24} color="#212121" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.modalBody}>
+              <TextInput
+                label="Daily Limit (kWh)"
+                value={budgetLimit}
+                onChangeText={setBudgetLimit}
+                keyboardType="numeric"
+                mode="outlined"
+                placeholder="10"
+                style={styles.budgetInput}
+                activeOutlineColor="#4361EE"
+                left={<TextInput.Icon icon="flash" />}
+              />
+              
+              <Text style={styles.inputHint}>
+                Set maximum energy consumption per day in kilowatt-hours
+              </Text>
+
+              <TextInput
+                label="Warning Threshold (%)"
+                value={budgetThreshold}
+                onChangeText={setBudgetThreshold}
+                keyboardType="numeric"
+                mode="outlined"
+                placeholder="80"
+                style={styles.budgetInput}
+                activeOutlineColor="#4361EE"
+                left={<TextInput.Icon icon="percent" />}
+              />
+              
+              <Text style={styles.inputHint}>
+                Get notified when you reach this percentage of your daily limit
+              </Text>
+            </View>
+
+            <View style={styles.modalFooter}>
+              <Button
+                mode="outlined"
+                onPress={() => setShowBudgetConfig(false)}
+                style={styles.modalCancelButton}
+              >
+                Cancel
+              </Button>
+              <Button
+                mode="contained"
+                onPress={handleSaveBudget}
+                style={styles.modalSaveButton}
+                buttonColor="#4361EE"
+                loading={savingBudget}
+                disabled={savingBudget}
+              >
+                Save Budget
+              </Button>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* Custom Alert */}
       <CustomAlert
@@ -388,10 +545,14 @@ const styles = StyleSheet.create({
   },
   scrollView: {
     flex: 1,
+  },
+  scrollContent: {
     padding: 16,
+    paddingBottom: 120,
   },
   statusCard: {
-    marginBottom: 16,
+    marginHorizontal: 16,
+    marginBottom: 24,
     elevation: 4,
     borderWidth: 2,
   },
@@ -425,7 +586,8 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   monitoringCard: {
-    marginBottom: 16,
+    marginHorizontal: 16,
+    marginBottom: 24,
     elevation: 2,
   },
   cardTitle: {
@@ -435,7 +597,8 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   metricsGrid: {
-    gap: 16,
+    gap: 20,
+    marginTop: 8,
   },
   metricItem: {
     padding: 16,
@@ -471,7 +634,8 @@ const styles = StyleSheet.create({
     color: '#666666',
   },
   recommendationsCard: {
-    marginBottom: 16,
+    marginHorizontal: 16,
+    marginBottom: 24,
     elevation: 2,
   },
   recommendationItem: {
@@ -503,13 +667,30 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#666666',
   },
-  emergencyCard: {
-    marginBottom: 16,
+  energyBudgetCard: {
+    marginHorizontal: 16,
+    marginTop: 32,
+    marginBottom: 24,
     elevation: 2,
+  },
+  emergencySection: {
+    marginHorizontal: 16,
+    marginTop: 72,
+    marginBottom: 40,
+  },
+  emergencySectionTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#212121',
+    marginBottom: 16,
   },
   emergencyModeContainer: {
     alignItems: 'center',
-    padding: 20,
+    padding: 24,
+    backgroundColor: '#FFF5F5',
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: '#F44336',
   },
   emergencyModeText: {
     fontSize: 18,
@@ -530,11 +711,12 @@ const styles = StyleSheet.create({
   },
   emergencyControlsContainer: {
     alignItems: 'center',
-    padding: 20,
+    paddingVertical: 24,
   },
   emergencyButton: {
-    borderRadius: 8,
+    borderRadius: 12,
     marginBottom: 12,
+    paddingVertical: 4,
   },
   emergencyWarning: {
     fontSize: 12,
@@ -546,6 +728,56 @@ const styles = StyleSheet.create({
     margin: 16,
     right: 0,
     bottom: 0,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalContent: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    width: '100%',
+    maxWidth: 400,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#212121',
+  },
+  modalBody: {
+    padding: 20,
+  },
+  budgetInput: {
+    marginBottom: 8,
+  },
+  inputHint: {
+    fontSize: 12,
+    color: '#666666',
+    marginBottom: 16,
+  },
+  modalFooter: {
+    flexDirection: 'row',
+    padding: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#E0E0E0',
+    gap: 12,
+  },
+  modalCancelButton: {
+    flex: 1,
+  },
+  modalSaveButton: {
+    flex: 1,
   },
 })
 

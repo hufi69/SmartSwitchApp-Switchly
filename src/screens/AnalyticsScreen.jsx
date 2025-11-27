@@ -3,8 +3,8 @@ import { View, StyleSheet, ScrollView, Dimensions, StatusBar, TouchableOpacity, 
 import { Text, Card, Button, Appbar, SegmentedButtons, IconButton } from "react-native-paper"
 import { MaterialCommunityIcons } from "@expo/vector-icons"
 import { LineChart, BarChart } from "react-native-chart-kit"
-import { realtimeDb } from "../config/firebase"
-import { ref, onValue } from "firebase/database"
+import { realtimeDb, auth } from "../config/firebase"
+import { ref, onValue, set } from "firebase/database"
 import { calculateLESCOCost, getTierInfo, formatCurrency } from "../utils/lescoRates"
 import CustomAlert from "../components/CustomAlert"
 import * as Clipboard from 'expo-clipboard'
@@ -22,13 +22,64 @@ const AnalyticsScreen = ({ navigation }) => {
   const [alertVisible, setAlertVisible] = useState(false)
   const [alertConfig, setAlertConfig] = useState({})
 
+  // Load user's analytics data from Firebase
   useEffect(() => {
-    // Listen to power data for analytics
-    const powerRef = ref(realtimeDb, 'power')
-    const listener = onValue(powerRef, (snapshot) => {
-      const power = snapshot.val()
-      if (power !== null) {
-        updateUsageHistory(power)
+    const userId = auth.currentUser?.uid
+    if (!userId) return
+
+    console.log('📊 Loading analytics for user:', userId)
+
+    const analyticsRef = ref(realtimeDb, `users/${userId}/analytics`)
+    const listener = onValue(analyticsRef, (snapshot) => {
+      const data = snapshot.val()
+      if (data) {
+        setAnalyticsData(data)
+        console.log('✅ Analytics data loaded')
+      }
+    })
+
+    return () => listener()
+  }, [])
+
+  // Load usage history from Firebase - Real-time updates
+  useEffect(() => {
+    const userId = auth.currentUser?.uid
+    if (!userId) return
+
+    console.log('📊 Loading usage history for analytics:', userId)
+
+    const historyRef = ref(realtimeDb, `users/${userId}/usageHistory`)
+    const listener = onValue(historyRef, (snapshot) => {
+      const data = snapshot.val()
+      if (data) {
+        // Convert Firebase data to array and sort by time
+        const historyArray = Object.keys(data)
+          .map(key => {
+            const item = data[key]
+            // Parse timestamp - item.timestamp is always stored as ISO string
+            let time
+            if (item.timestamp) {
+              time = new Date(item.timestamp)
+            } else {
+              // Fallback: use current time
+              time = new Date()
+            }
+            
+            return {
+              time,
+              power: item.power || 0,
+              energy: item.energy || 0,
+              voltage: item.voltage || 0,
+              current: item.current || 0
+            }
+          })
+          .sort((a, b) => a.time - b.time) // Sort oldest first for calculations
+        
+        setUsageHistory(historyArray)
+        console.log(`✅ Analytics: Loaded ${historyArray.length} usage records`)
+      } else {
+        setUsageHistory([])
+        console.log('📭 Analytics: No usage history found')
       }
     })
 
@@ -41,18 +92,6 @@ const AnalyticsScreen = ({ navigation }) => {
       calculateAnalytics()
     }
   }, [usageHistory, calculateAnalytics])
-
-  const updateUsageHistory = (power) => {
-    const now = new Date()
-    const energyInKWh = (power / 1000) * (1 / 3600) // Convert to kWh for 1 second
-
-    setUsageHistory(prev => {
-      const updated = [...prev, { time: now, power, energy: energyInKWh }]
-      // Keep last 24 hours
-      const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000)
-      return updated.filter(item => item.time > oneDayAgo)
-    })
-  }
 
   const calculateAnalytics = useCallback(() => {
     const now = new Date()
@@ -79,20 +118,38 @@ const AnalyticsScreen = ({ navigation }) => {
     const monthlyCost = monthlyCostData.totalCost
     const monthlyPeak = dailyPeak
 
-    setAnalyticsData({
+    const newAnalyticsData = {
       daily: { usage: dailyUsage, cost: dailyCost, peak: dailyPeak },
       weekly: { usage: weeklyUsage, cost: weeklyCost, peak: weeklyPeak },
       monthly: { usage: monthlyUsage, cost: monthlyCost, peak: monthlyPeak },
-    })
+    }
+    
+    setAnalyticsData(newAnalyticsData)
+    
+    // Save analytics to Firebase - USER-SPECIFIC
+    const userId = auth.currentUser?.uid
+    if (userId) {
+      const analyticsRef = ref(realtimeDb, `users/${userId}/analytics`)
+      set(analyticsRef, newAnalyticsData).catch(err => 
+        console.error('Error saving analytics:', err)
+      )
+    }
   }, [usageHistory])
 
   const findPeakUsage = (data) => {
     if (data.length === 0) return { time: '--', value: 0 }
 
-    const peak = data.reduce((max, item) => item.power > max.power ? item : max, data[0])
+    const peak = data.reduce((max, item) => {
+      const itemPower = item.power || 0
+      const maxPower = max.power || 0
+      return itemPower > maxPower ? item : max
+    }, data[0])
+    
     return {
-      time: peak.time.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
-      value: peak.power
+      time: peak.time && peak.time instanceof Date 
+        ? peak.time.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+        : '--',
+      value: peak.power || 0
     }
   }
 
@@ -106,11 +163,13 @@ const AnalyticsScreen = ({ navigation }) => {
       for (let i = 23; i >= 0; i--) {
         const hourAgo = new Date(now.getTime() - i * 60 * 60 * 1000)
         const hourData = usageHistory.filter(item => {
+          if (!item.time || !(item.time instanceof Date)) return false
           const itemHour = item.time.getHours()
-          return itemHour === hourAgo.getHours()
+          const itemDate = item.time.getDate()
+          return itemHour === hourAgo.getHours() && itemDate === hourAgo.getDate()
         })
         const avgPower = hourData.length > 0
-          ? hourData.reduce((sum, item) => sum + item.power, 0) / hourData.length
+          ? hourData.reduce((sum, item) => sum + (item.power || 0), 0) / hourData.length
           : 0
         filteredData.push(avgPower)
         labels.push(hourAgo.getHours() + 'h')
@@ -120,19 +179,27 @@ const AnalyticsScreen = ({ navigation }) => {
       const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
       for (let i = 6; i >= 0; i--) {
         const dayAgo = new Date(now.getTime() - i * 24 * 60 * 60 * 1000)
-        const dayData = usageHistory.filter(item =>
-          item.time.toDateString() === dayAgo.toDateString()
-        )
-        const totalEnergy = dayData.reduce((sum, item) => sum + item.energy, 0)
+        const dayData = usageHistory.filter(item => {
+          if (!item.time || !(item.time instanceof Date)) return false
+          return item.time.toDateString() === dayAgo.toDateString()
+        })
+        const totalEnergy = dayData.reduce((sum, item) => sum + (item.energy || 0), 0)
         const costData = calculateLESCOCost(totalEnergy)
         filteredData.push(costData.totalCost)
         labels.push(days[dayAgo.getDay()])
       }
     } else {
-      // Monthly (simulate last 4 weeks)
+      // Monthly - Last 4 weeks
       for (let i = 3; i >= 0; i--) {
-        const weekAgo = new Date(now.getTime() - i * 7 * 24 * 60 * 60 * 1000)
-        filteredData.push(analyticsData.weekly.cost)
+        const weekStart = new Date(now.getTime() - i * 7 * 24 * 60 * 60 * 1000)
+        const weekEnd = new Date(weekStart.getTime() + 7 * 24 * 60 * 60 * 1000)
+        const weekData = usageHistory.filter(item => {
+          if (!item.time || !(item.time instanceof Date)) return false
+          return item.time >= weekStart && item.time < weekEnd
+        })
+        const totalEnergy = weekData.reduce((sum, item) => sum + (item.energy || 0), 0)
+        const costData = calculateLESCOCost(totalEnergy)
+        filteredData.push(costData.totalCost)
         labels.push(`W${4-i}`)
       }
     }
@@ -141,8 +208,8 @@ const AnalyticsScreen = ({ navigation }) => {
       labels: selectedPeriod === 'daily' ? labels.filter((_, i) => i % 4 === 0) : labels,
       datasets: [{
         data: selectedPeriod === 'daily'
-          ? filteredData.filter((_, i) => i % 4 === 0).map(v => v || 0.1)
-          : filteredData.map(v => v || 0.1),
+          ? filteredData.filter((_, i) => i % 4 === 0).map(v => Math.max(v || 0, 0.1))
+          : filteredData.map(v => Math.max(v || 0, 0.1)),
         color: () => "#4361EE",
         strokeWidth: 2,
       }]
@@ -175,7 +242,7 @@ const AnalyticsScreen = ({ navigation }) => {
 
   const exportAsCSV = async () => {
     const current = analyticsData[selectedPeriod]
-    const csv = `Smart Switch Analytics Report
+    const csv = `Switchly Analytics Report
 Period: ${selectedPeriod.toUpperCase()}
 Generated: ${new Date().toLocaleString()}
 
@@ -215,7 +282,6 @@ Cost Prediction (Next Period),${formatCurrency(getCostPrediction())}
       <StatusBar barStyle="light-content" backgroundColor="#4361EE" />
 
       <Appbar.Header style={styles.header}>
-        <Appbar.BackAction onPress={() => navigation.goBack()} color="#FFFFFF" />
         <Appbar.Content title="Analytics" titleStyle={styles.headerTitle} />
         <IconButton icon="content-copy" iconColor="#FFFFFF" onPress={exportAsCSV} />
       </Appbar.Header>
@@ -273,25 +339,35 @@ Cost Prediction (Next Period),${formatCurrency(getCostPrediction())}
                 {selectedPeriod === 'daily' ? 'Hourly' : selectedPeriod === 'weekly' ? 'Daily' : 'Weekly'} Usage
               </Text>
               <View style={styles.chartContainer}>
-                <LineChart
+                <BarChart
                   data={getChartData()}
                   width={width - 60}
                   height={220}
                   chartConfig={{
-                    backgroundColor: "#4361EE",
-                    backgroundGradientFrom: "#4361EE",
-                    backgroundGradientTo: "#3F37C9",
+                    backgroundColor: "#FFFFFF",
+                    backgroundGradientFrom: "#FFFFFF",
+                    backgroundGradientTo: "#F8F9FA",
                     decimalPlaces: 2,
-                    color: (opacity = 1) => `rgba(255, 255, 255, ${opacity})`,
-                    labelColor: (opacity = 1) => `rgba(255, 255, 255, ${opacity})`,
+                    color: (opacity = 1) => "#4361EE",
+                    labelColor: (opacity = 1) => "#757575",
                     style: { borderRadius: 16 },
-                    propsForDots: {
-                      r: "4",
-                      strokeWidth: "2",
-                      stroke: "#FFFFFF",
+                    barPercentage: 0.7,
+                    fillShadowGradient: "#4361EE",
+                    fillShadowGradientOpacity: 0.9,
+                    propsForBackgroundLines: {
+                      strokeDasharray: "2,2",
+                      stroke: "#E0E0E0",
+                      strokeWidth: 1,
+                    },
+                    propsForLabels: {
+                      fontSize: 11,
+                      fontWeight: '500',
                     },
                   }}
-                  bezier
+                  showValuesOnTopOfBars
+                  withInnerLines={true}
+                  withVerticalLabels={true}
+                  withHorizontalLabels={true}
                   style={styles.chart}
                 />
               </View>

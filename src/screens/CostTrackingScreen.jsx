@@ -3,8 +3,8 @@ import { View, StyleSheet, ScrollView, Dimensions, StatusBar, TouchableOpacity, 
 import { Text, Card, Button, Appbar, SegmentedButtons, IconButton, Chip, Divider } from "react-native-paper"
 import { MaterialCommunityIcons } from "@expo/vector-icons"
 import { LineChart, BarChart } from "react-native-chart-kit"
-import { realtimeDb } from "../config/firebase"
-import { ref, onValue } from "firebase/database"
+import { realtimeDb, auth } from "../config/firebase"
+import { ref, onValue, set } from "firebase/database"
 import { calculateLESCOCost, getTierInfo, formatCurrency, getCostSavingsTips } from "../utils/lescoRates"
 import CustomAlert from "../components/CustomAlert"
 import * as Print from 'expo-print'
@@ -26,32 +26,48 @@ const CostTrackingScreen = ({ navigation }) => {
   const [alertVisible, setAlertVisible] = useState(false)
   const [alertConfig, setAlertConfig] = useState({})
 
+  // Load user's cost tracking data from Firebase
   useEffect(() => {
-    // Listen to power data for cost tracking
-    const powerRef = ref(realtimeDb, 'power')
-    const listener = onValue(powerRef, (snapshot) => {
-      const power = snapshot.val()
-      if (power !== null) {
-        updateUsageData(power)
+    const userId = auth.currentUser?.uid
+    if (!userId) return
+
+    console.log('💰 Loading cost tracking for user:', userId)
+
+    const costRef = ref(realtimeDb, `users/${userId}/costTracking`)
+    const listener = onValue(costRef, (snapshot) => {
+      const data = snapshot.val()
+      if (data) {
+        setCurrentUsage(data.currentUsage || 0)
+        setCurrentCost(data.currentCost || 0)
+        setTierInfo(data.tierInfo || null)
+        console.log('✅ Cost tracking data loaded')
       }
     })
 
     return () => listener()
   }, [])
 
-  const updateUsageData = (power) => {
-    const now = new Date()
-    const energyInKWh = (power / 1000) * (1 / 3600) // Convert to kWh for 1 second
+  // Load usage history from Firebase
+  useEffect(() => {
+    const userId = auth.currentUser?.uid
+    if (!userId) return
 
-    setUsageData(prev => {
-      const updated = [...prev, { time: now, power, energy: energyInKWh }]
-      // Keep last 30 days for cost tracking
-      const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
-      return updated.filter(item => item.time > thirtyDaysAgo)
+    const historyRef = ref(realtimeDb, `users/${userId}/usageHistory`)
+    const listener = onValue(historyRef, (snapshot) => {
+      const data = snapshot.val()
+      if (data) {
+        const historyArray = Object.keys(data).map(key => ({
+          time: new Date(key),
+          ...data[key]
+        }))
+        setUsageData(historyArray)
+      }
     })
-  }
 
-  // Calculate current usage and cost
+    return () => listener()
+  }, [])
+
+  // Calculate and save current usage and cost to Firebase
   useEffect(() => {
     if (usageData.length > 0) {
       const now = new Date()
@@ -70,11 +86,33 @@ const CostTrackingScreen = ({ navigation }) => {
 
       const totalUsage = filteredData.reduce((sum, item) => sum + item.energy, 0)
       const costData = calculateLESCOCost(totalUsage)
+      const tier = getTierInfo(totalUsage)
+      const tips = getCostSavingsTips(totalUsage, costData.totalCost)
       
       setCurrentUsage(totalUsage)
       setCurrentCost(costData.totalCost)
-      setTierInfo(getTierInfo(totalUsage))
-      setSavingsTips(getCostSavingsTips(totalUsage))
+      setTierInfo(tier)
+      setSavingsTips(tips)
+      
+      // Save to Firebase - USER-SPECIFIC
+      const userId = auth.currentUser?.uid
+      if (userId && totalUsage > 0) {
+        const costRef = ref(realtimeDb, `users/${userId}/costTracking`)
+        
+        // Sanitize tier object - Firebase doesn't allow Infinity values
+        const sanitizedTier = {
+          ...tier,
+          maxUnits: tier.maxUnits === Infinity ? null : tier.maxUnits
+        }
+        
+        set(costRef, {
+          currentUsage: totalUsage,
+          currentCost: costData.totalCost,
+          tierInfo: sanitizedTier,
+          period: selectedPeriod,
+          lastUpdated: new Date().toISOString()
+        }).catch(err => console.error('Error saving cost data:', err))
+      }
     }
   }, [usageData, selectedPeriod])
 
@@ -167,7 +205,7 @@ const CostTrackingScreen = ({ navigation }) => {
         <html>
         <head>
           <meta charset="utf-8">
-          <title>Smart Switch Cost Report</title>
+          <title>Switchly Cost Report</title>
           <style>
             body { font-family: Arial, sans-serif; margin: 20px; }
             .header { text-align: center; margin-bottom: 30px; }
@@ -181,7 +219,7 @@ const CostTrackingScreen = ({ navigation }) => {
         </head>
         <body>
           <div class="header">
-            <h1>Smart Switch Cost Report</h1>
+            <h1>Switchly Cost Report</h1>
             <p>Generated: ${reportData.generatedAt}</p>
             <p>Period: ${reportData.period.toUpperCase()}</p>
           </div>
@@ -246,7 +284,7 @@ const CostTrackingScreen = ({ navigation }) => {
       const now = new Date()
       const breakdown = calculateLESCOCost(currentUsage).breakdown
       
-      const csv = `Smart Switch Cost Report
+      const csv = `Switchly Cost Report
 Period: ${selectedPeriod.toUpperCase()}
 Generated: ${now.toLocaleString()}
 
@@ -311,7 +349,7 @@ Total,,,${formatCurrency(currentCost)}
 
             <View style={styles.tierInfo}>
               <Chip 
-                icon="lightning-bolt" 
+                icon="power-socket" 
                 style={styles.tierChip}
                 textStyle={styles.tierChipText}
               >
@@ -326,25 +364,35 @@ Total,,,${formatCurrency(currentCost)}
           <Card.Content>
             <Text style={styles.cardTitle}>Cost Trend</Text>
             <View style={styles.chartContainer}>
-              <LineChart
+              <BarChart
                 data={getChartData()}
                 width={width - 60}
                 height={220}
                 chartConfig={{
-                  backgroundColor: "#4361EE",
-                  backgroundGradientFrom: "#4361EE",
-                  backgroundGradientTo: "#3F37C9",
+                  backgroundColor: "#FFFFFF",
+                  backgroundGradientFrom: "#FFFFFF",
+                  backgroundGradientTo: "#F8F9FA",
                   decimalPlaces: 2,
-                  color: (opacity = 1) => `rgba(255, 255, 255, ${opacity})`,
-                  labelColor: (opacity = 1) => `rgba(255, 255, 255, ${opacity})`,
+                  color: (opacity = 1) => "#4361EE",
+                  labelColor: (opacity = 1) => "#757575",
                   style: { borderRadius: 16 },
-                  propsForDots: {
-                    r: "4",
-                    strokeWidth: "2",
-                    stroke: "#FFFFFF",
+                  barPercentage: 0.7,
+                  fillShadowGradient: "#4361EE",
+                  fillShadowGradientOpacity: 0.9,
+                  propsForBackgroundLines: {
+                    strokeDasharray: "2,2",
+                    stroke: "#E0E0E0",
+                    strokeWidth: 1,
+                  },
+                  propsForLabels: {
+                    fontSize: 11,
+                    fontWeight: '500',
                   },
                 }}
-                bezier
+                showValuesOnTopOfBars
+                withInnerLines={true}
+                withVerticalLabels={true}
+                withHorizontalLabels={true}
                 style={styles.chart}
               />
             </View>

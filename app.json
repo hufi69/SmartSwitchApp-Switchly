@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "Smart Switch",
-    "slug": "smart-switch-app",
+    "name": "Switchly",
+    "slug": "switchly-app",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -36,7 +36,7 @@
       "icon": "./assets/icon.png",
       "color": "#4361EE",
       "androidMode": "default",
-      "androidCollapsedTitle": "Smart Switch Alert"
+      "androidCollapsedTitle": "Switchly Alert"
     },
     "plugins": [
       [

@@ -55,7 +55,7 @@ const Toast = ({ visible, message, type = "error", duration = 3000, onDismiss })
     switch (type) {
       case "success":
         return {
-          icon: "lightning-bolt",
+          icon: "check-circle",
           iconColor: "#FFFFFF",
           textColor: "#FFFFFF",
           backgroundColor: "#4361EE",
@@ -63,7 +63,7 @@ const Toast = ({ visible, message, type = "error", duration = 3000, onDismiss })
         }
       case "error":
         return {
-          icon: "lightning-bolt",
+          icon: "alert-circle",
           iconColor: "#FFFFFF",
           textColor: "#FFFFFF",
           backgroundColor: "#1E3A8A",
@@ -71,7 +71,7 @@ const Toast = ({ visible, message, type = "error", duration = 3000, onDismiss })
         }
       case "warning":
         return {
-          icon: "lightning-bolt",
+          icon: "alert",
           iconColor: "#FFFFFF",
           textColor: "#FFFFFF",
           backgroundColor: "#1E3A8A",
@@ -79,7 +79,7 @@ const Toast = ({ visible, message, type = "error", duration = 3000, onDismiss })
         }
       case "info":
         return {
-          icon: "lightning-bolt",
+          icon: "toggle-switch",
           iconColor: "#FFFFFF",
           textColor: "#FFFFFF",
           backgroundColor: "#4361EE",
@@ -87,7 +87,7 @@ const Toast = ({ visible, message, type = "error", duration = 3000, onDismiss })
         }
       default:
         return {
-          icon: "lightning-bolt",
+          icon: "toggle-switch",
           iconColor: "#FFFFFF",
           textColor: "#FFFFFF",
           backgroundColor: "#1E3A8A",

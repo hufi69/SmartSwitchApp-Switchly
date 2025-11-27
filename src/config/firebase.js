@@ -1,10 +1,9 @@
-import { initializeApp } from "firebase/app"
-import { getAuth } from "firebase/auth"
+import { initializeApp, getApps } from "firebase/app"
+import { initializeAuth, getAuth, getReactNativePersistence } from "firebase/auth"
 import { getFirestore } from "firebase/firestore"
 import { getDatabase } from "firebase/database"
+import AsyncStorage from "@react-native-async-storage/async-storage"
 
-// Firebase configuration for SmartSwitch
-// Using environment variables for security (EXPO_PUBLIC_ prefix required for Expo)
 const firebaseConfig = {
   apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
   authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN,
@@ -15,16 +14,30 @@ const firebaseConfig = {
   appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID
 }
 
-// Initialize Firebase
-const app = initializeApp(firebaseConfig)
 
-// Initialize Firebase Authentication and get a reference to the service
-export const auth = getAuth(app)
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0]
 
-// Initialize Cloud Firestore and get a reference to the service
+
+let auth
+try {
+  auth = initializeAuth(app, {
+    persistence: getReactNativePersistence(AsyncStorage)
+  })
+} catch (error) {
+
+  if (error.code === "auth/already-initialized") {
+    auth = getAuth(app)
+  } else {
+    throw error
+  }
+}
+
+export { auth }
+
+
 export const db = getFirestore(app)
 
-// Initialize Realtime Database (for ESP32 device control)
+
 export const realtimeDb = getDatabase(app)
 
 export default app

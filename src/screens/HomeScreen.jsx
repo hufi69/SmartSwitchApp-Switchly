@@ -4,7 +4,7 @@ import { Text, Card, Switch, IconButton, Button, Appbar, Avatar, ProgressBar } f
 import { MaterialCommunityIcons } from "@expo/vector-icons"
 import { LinearGradient } from "expo-linear-gradient"
 import { BlurView } from "expo-blur"
-import { LineChart } from "react-native-chart-kit"
+import { BarChart } from "react-native-chart-kit"
 import SmartTimerModal from "../components/SmartTimerModal"
 import CustomAlert from "../components/CustomAlert"
 import { getOverallSafetyStatus, getSafetyStatusColor, getSafetyStatusIcon } from "../utils/safetyFeatures"
@@ -36,6 +36,7 @@ const HomeScreen = ({ navigation }) => {
   const [dailyCost, setDailyCost] = useState(0)
   const [currentTier, setCurrentTier] = useState(null)
   const [powerHistory, setPowerHistory] = useState([0, 0, 0, 0, 0, 0])
+  const [unreadNotificationCount, setUnreadNotificationCount] = useState(0)
   const [alertsSent, setAlertsSent] = useState({
     overvoltage: false,
     undervoltage: false,
@@ -45,6 +46,7 @@ const HomeScreen = ({ navigation }) => {
   const [deleteAlertVisible, setDeleteAlertVisible] = useState(false)
   const [timerToDelete, setTimerToDelete] = useState(null)
   const [timers, setTimers] = useState([])
+  const [masterTimerEnabled, setMasterTimerEnabled] = useState(true) // MASTER SWITCH for all timers
   const [safetyStatus, setSafetyStatus] = useState({
     status: 'safe',
     message: 'All Systems Safe',
@@ -58,10 +60,13 @@ const HomeScreen = ({ navigation }) => {
     power: 4,
     dailyUsage: 0.1,
   })
+  const [devices, setDevices] = useState({})
   
   // Animation values
   const pulseAnim = useRef(new Animated.Value(1)).current
   const fadeAnim = useRef(new Animated.Value(0)).current
+  const spinAnim = useRef(new Animated.Value(0)).current
+  const lastHistorySaveRef = useRef(0) // Track last time we saved to usageHistory
   
   // Start animations on mount
   useEffect(() => {
@@ -69,6 +74,15 @@ const HomeScreen = ({ navigation }) => {
     if (mainSwitchOn) {
       pulse(pulseAnim, 0.95, 1.05, 2000).start()
     }
+    
+    // Continuous spinning animation for logo
+    Animated.loop(
+      Animated.timing(spinAnim, {
+        toValue: 1,
+        duration: 3000,
+        useNativeDriver: true,
+      })
+    ).start()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   
@@ -147,20 +161,94 @@ const HomeScreen = ({ navigation }) => {
     return unsubscribe
   }, [navigation])
 
-  // Calculate daily energy usage (kWh) and cost with LESCO rates
+  // Load user's daily usage from Firebase
   useEffect(() => {
     if (loading) return
 
-    const interval = setInterval(() => {
+    const userId = auth.currentUser?.uid
+    if (!userId) return
+
+    const today = new Date().toISOString().split('T')[0]
+    const usageRef = ref(realtimeDb, `users/${userId}/dailyUsage/${today}`)
+    
+    const listener = onValue(usageRef, (snapshot) => {
+      const data = snapshot.val()
+      if (data) {
+        setDailyUsage(data.usage || 0)
+        setDailyCost(data.cost || 0)
+        setCurrentTier(data.tier || null)
+      }
+    })
+
+    return () => listener()
+  }, [loading])
+
+  // Calculate daily energy usage (kWh) and cost with LESCO rates - SAVE TO FIREBASE
+  useEffect(() => {
+    if (loading) return
+
+    let lastHistorySave = 0 // Track last time we saved to usageHistory
+
+    const interval = setInterval(async () => {
       if (mainSwitchOn && powerData.power > 0) {
-        // Calculate energy consumed in this interval (1 second = 1/3600 hour)
-        const energyInKWh = (powerData.power / 1000) * (1 / 3600)
+        // Calculate energy consumed in this interval (5 seconds)
+        const energyInKWh = (powerData.power / 1000) * (5 / 3600)
+        
         setDailyUsage((prev) => {
           const newUsage = Number((prev + energyInKWh).toFixed(6))
+          
           // Calculate cost using LESCO rates
           const costData = calculateLESCOCost(newUsage)
-          setDailyCost(costData.totalCost)
-          setCurrentTier(getTierInfo(newUsage))
+          const newCost = costData.totalCost
+          const newTier = getTierInfo(newUsage)
+          
+          setDailyCost(newCost)
+          setCurrentTier(newTier)
+          
+          // Save to Firebase - USER-SPECIFIC
+          const userId = auth.currentUser?.uid
+          if (userId) {
+            const today = new Date().toISOString().split('T')[0]
+            const usageRef = ref(realtimeDb, `users/${userId}/dailyUsage/${today}`)
+            
+            // Sanitize tier object - Firebase doesn't allow Infinity values
+            const sanitizedTier = {
+              ...newTier,
+              maxUnits: newTier.maxUnits === Infinity ? null : newTier.maxUnits
+            }
+            
+            set(usageRef, {
+              usage: newUsage,
+              cost: newCost,
+              tier: sanitizedTier,
+              lastUpdated: new Date().toISOString()
+            }).catch(err => console.error('Error saving daily usage:', err))
+
+            // Save to usageHistory every 5 minutes (300 seconds) for History and Analytics screens
+            const now = Date.now()
+            if (now - lastHistorySave >= 300000) { // 5 minutes = 300000 ms
+              // Defer Firebase write to next event loop to avoid updating other components during render
+              setTimeout(() => {
+                const timestamp = new Date().toISOString()
+                // Sanitize timestamp for Firebase path - replace invalid characters
+                const safeTimestamp = timestamp.replace(/[:.]/g, '-').replace('T', '_').replace('Z', '')
+                const historyRef = ref(realtimeDb, `users/${userId}/usageHistory/${safeTimestamp}`)
+                
+                set(historyRef, {
+                  power: powerData.power,
+                  energy: energyInKWh,
+                  timestamp,
+                  voltage: powerData.voltage,
+                  current: powerData.current
+                }).catch(err => console.error('Error saving usage history:', err))
+                
+                console.log(`💾 Usage history saved: ${powerData.power}W`)
+              }, 0)
+              
+              lastHistorySave = now
+            }
+          }
+          
           return newUsage
         })
       }
@@ -173,7 +261,7 @@ const HomeScreen = ({ navigation }) => {
     }, 5000)
 
     return () => clearInterval(interval)
-  }, [loading, mainSwitchOn, powerData.power])
+  }, [loading, mainSwitchOn, powerData.power, powerData.voltage, powerData.current])
 
   // Monitor voltage, power, and device status for alerts
   useEffect(() => {
@@ -271,11 +359,20 @@ const HomeScreen = ({ navigation }) => {
     }
   }, [loading])
 
-  // Load timers from Firebase
+  // Load timers from Firebase - USER-SPECIFIC (Each user sees ONLY their own timers!)
   useEffect(() => {
     if (loading) return
 
-    const timersRef = ref(realtimeDb, 'timers')
+    const userId = auth.currentUser?.uid
+    if (!userId) {
+      console.error('❌ No user ID found')
+      setTimers([])
+      return
+    }
+
+    console.log('📥 Loading timers for user:', userId)
+    const timersRef = ref(realtimeDb, `users/${userId}/timers`)
+    
     const timersListener = onValue(timersRef, (snapshot) => {
       const timersData = snapshot.val()
       if (timersData) {
@@ -284,14 +381,77 @@ const HomeScreen = ({ navigation }) => {
           ...timersData[key]
         }))
         setTimers(timersArray)
-        console.log('Timers loaded from Firebase:', timersArray.length)
+        console.log(`✅ User ${userId} - Timers loaded:`, timersArray.length)
       } else {
         setTimers([])
+        console.log(`📭 User ${userId} - NO timers (Fresh user!)`)
       }
     })
 
     return () => timersListener()
   }, [loading])
+
+  // Load Master Timer Switch State from Firebase
+  useEffect(() => {
+    if (loading) return
+
+    const userId = auth.currentUser?.uid
+    if (!userId) return
+
+    const masterTimerRef = ref(realtimeDb, `users/${userId}/masterTimerEnabled`)
+    const listener = onValue(masterTimerRef, (snapshot) => {
+      const value = snapshot.val()
+      if (value !== null) {
+        setMasterTimerEnabled(value)
+        console.log(`🎛️ Master Timer: ${value ? 'ENABLED' : 'DISABLED'}`)
+      }
+    })
+
+    return () => listener()
+  }, [loading])
+
+  // Load user's devices from Firebase
+  useEffect(() => {
+    if (loading) return
+
+    const userId = auth.currentUser?.uid
+    if (!userId) return
+
+    console.log('📱 Loading devices for user:', userId)
+
+    const devicesRef = ref(realtimeDb, `users/${userId}/devices`)
+    const listener = onValue(devicesRef, (snapshot) => {
+      const devicesData = snapshot.val()
+      if (devicesData) {
+        setDevices(devicesData)
+        console.log(`✅ Loaded ${Object.keys(devicesData).length} devices`)
+      } else {
+        setDevices({})
+        console.log('📭 No devices found')
+      }
+    })
+
+    return () => listener()
+  }, [loading])
+
+  // Listen to unread notification count
+  useEffect(() => {
+    const userId = auth.currentUser?.uid
+    if (!userId) return
+
+    const notificationsRef = ref(realtimeDb, `users/${userId}/notifications`)
+    const listener = onValue(notificationsRef, (snapshot) => {
+      const data = snapshot.val()
+      if (data) {
+        const unreadCount = Object.values(data).filter(n => !n.read).length
+        setUnreadNotificationCount(unreadCount)
+      } else {
+        setUnreadNotificationCount(0)
+      }
+    })
+
+    return () => listener()
+  }, [])
 
   // Update safety status when power data changes
   useEffect(() => {
@@ -307,7 +467,13 @@ const HomeScreen = ({ navigation }) => {
 
   // Auto Timer Checking System
   useEffect(() => {
-    if (loading || timers.length === 0 || manualOverride) return
+    // 🚫 Don't check timers if Master Timer is DISABLED
+    if (loading || timers.length === 0 || manualOverride || !masterTimerEnabled) {
+      if (!masterTimerEnabled) {
+        console.log('⏸️ Timer checking PAUSED - Master Timer is DISABLED')
+      }
+      return
+    }
 
     const checkTimers = async () => {
       const now = new Date()
@@ -349,8 +515,9 @@ const HomeScreen = ({ navigation }) => {
         if (timeMatched && dayMatched) {
           // Auto-enable timer if not already enabled
           if (!timer.enabled) {
+            const userId = auth.currentUser?.uid
             console.log(`🔄 Auto-enabling timer "${timer.name}"`)
-            const timerRef = ref(realtimeDb, `timers/${timer.id}/enabled`)
+            const timerRef = ref(realtimeDb, `users/${userId}/timers/${timer.id}/enabled`)
             await set(timerRef, true)
             setTimers(prev => prev.map(t => 
               t.id === timer.id ? { ...t, enabled: true } : t
@@ -362,8 +529,9 @@ const HomeScreen = ({ navigation }) => {
           break
         } else if (timer.enabled && timeMatched === false && dayMatched) {
           // Timer was active but time has passed - auto disable
+          const userId = auth.currentUser?.uid
           console.log(`🔄 Auto-disabling timer "${timer.name}" (time ended)`)
-          const timerRef = ref(realtimeDb, `timers/${timer.id}/enabled`)
+          const timerRef = ref(realtimeDb, `users/${userId}/timers/${timer.id}/enabled`)
           await set(timerRef, false)
           setTimers(prev => prev.map(t => 
             t.id === timer.id ? { ...t, enabled: false } : t
@@ -394,17 +562,21 @@ const HomeScreen = ({ navigation }) => {
     const timerInterval = setInterval(checkTimers, 10000)
 
     return () => clearInterval(timerInterval)
-  }, [loading, timers, mainSwitchOn, manualOverride])
+  }, [loading, timers, mainSwitchOn, manualOverride, masterTimerEnabled])
 
   const toggleMainSwitch = async () => {
     const newStatus = !mainSwitchOn
     setMainSwitchOn(newStatus)
     
+    // Main switch directly controls relay, which controls power supply
+    // Main switch ON = Relay ON = Power Supply ON
+    // Main switch OFF = Relay OFF = Power Supply OFF (charging stops)
+    
     // Disable manual override when turning ON manually
     // Enable manual override only when turning OFF manually
     if (!newStatus) {
       setManualOverride(true)
-      console.log('🎛️ Manual OFF - Timer control paused')
+      console.log('🎛️ Manual OFF - Timer control paused → Relay OFF → Power Supply OFF')
       
       // Reset manual override after 30 seconds to allow next timer
       setTimeout(() => {
@@ -413,14 +585,20 @@ const HomeScreen = ({ navigation }) => {
       }, 30000)
     } else {
       setManualOverride(false)
-      console.log('🎛️ Manual ON - Timer control active')
+      console.log('🎛️ Manual ON - Timer control active → Relay ON → Power Supply ON')
     }
 
-    // Update Firebase to control ESP32
+    // Update Firebase to control ESP32 relay
+    // This directly controls the physical relay, which cuts/starts power supply
     try {
-      await set(ref(realtimeDb, 'relay'), newStatus ? 'on' : 'off')
+      // Force update relay value - ESP32 should be listening to this path
+      const relayValue = newStatus ? 'on' : 'off'
+      await set(ref(realtimeDb, 'relay'), relayValue)
+      console.log(`✅ Relay set to "${relayValue}" in Firebase - ESP32 should read this and control physical relay`)
+      console.log(`📡 Firebase path: /relay = "${relayValue}"`)
+      console.log(`⚠️ If charging still continues, check ESP32 code - it should listen to /relay path`)
     } catch (error) {
-      console.error('Error updating relay:', error)
+      console.error('❌ Error updating relay:', error)
       setMainSwitchOn(!newStatus) // Revert on error
     }
   }
@@ -441,8 +619,13 @@ const HomeScreen = ({ navigation }) => {
 
   const handleSaveTimer = async (newTimer) => {
     try {
-      // Save to Firebase
-      const timerRef = ref(realtimeDb, `timers/${newTimer.id}`)
+      const userId = auth.currentUser?.uid
+      if (!userId) {
+        throw new Error('No user ID found')
+      }
+
+      // Save to Firebase - USER-SPECIFIC
+      const timerRef = ref(realtimeDb, `users/${userId}/timers/${newTimer.id}`)
       await set(timerRef, {
         name: newTimer.name,
         startTime: newTimer.startTime,
@@ -458,9 +641,8 @@ const HomeScreen = ({ navigation }) => {
         sunsetTime: newTimer.sunsetTime || null
       })
       
-      // Update local state
-      setTimers((prev) => [...prev, newTimer])
-      console.log('Timer saved to Firebase:', newTimer.id)
+   
+      console.log(`✅ User ${userId} - Timer saved:`, newTimer.id)
     } catch (error) {
       console.error('Error saving timer:', error)
       alert('Failed to save timer. Please try again.')
@@ -476,13 +658,18 @@ const HomeScreen = ({ navigation }) => {
   const confirmDeleteTimer = async () => {
     if (timerToDelete) {
       try {
-        // Delete from Firebase
-        const timerRef = ref(realtimeDb, `timers/${timerToDelete.id}`)
+        const userId = auth.currentUser?.uid
+        if (!userId) {
+          throw new Error('No user ID found')
+        }
+
+        // Delete from Firebase - USER-SPECIFIC
+        const timerRef = ref(realtimeDb, `users/${userId}/timers/${timerToDelete.id}`)
         await set(timerRef, null)
         
         // Update local state
         setTimers(prev => prev.filter(timer => timer.id !== timerToDelete.id))
-        console.log('Timer deleted from Firebase:', timerToDelete.id)
+        console.log(`🗑️ User ${userId} - Timer deleted:`, timerToDelete.id)
       } catch (error) {
         console.error('Error deleting timer:', error)
         alert('Failed to delete timer. Please try again.')
@@ -494,12 +681,17 @@ const HomeScreen = ({ navigation }) => {
 
   const toggleTimer = async (timerId) => {
     try {
+      const userId = auth.currentUser?.uid
+      if (!userId) {
+        throw new Error('No user ID found')
+      }
+
       const timer = timers.find(t => t.id === timerId)
       if (timer) {
         const newEnabledState = !timer.enabled
         
-        // Update Firebase
-        const timerRef = ref(realtimeDb, `timers/${timerId}/enabled`)
+        // Update Firebase - USER-SPECIFIC
+        const timerRef = ref(realtimeDb, `users/${userId}/timers/${timerId}/enabled`)
         await set(timerRef, newEnabledState)
         
         // Update local state
@@ -561,11 +753,88 @@ const HomeScreen = ({ navigation }) => {
       .substring(0, 2)
   }
 
+  // Toggle device - if turning ON, also turn on main switch (relay). If turning OFF, check if any device is ON
+  // Main switch directly controls relay, which controls power supply
+  const toggleDevice = async (deviceId) => {
+    const userId = auth.currentUser?.uid
+    if (!userId) return
+
+    const device = devices[deviceId]
+    if (!device) return
+
+    const currentStatus = device.status || 'off'
+    const newStatus = currentStatus === 'on' ? 'off' : 'on'
+    
+    try {
+      // Update device status in Firebase FIRST
+      await set(ref(realtimeDb, `users/${userId}/devices/${deviceId}/status`), newStatus)
+      
+      // If turning device ON, also turn on main switch (relay) automatically
+      // Main switch ON = Relay ON = Power Supply ON
+      if (newStatus === 'on') {
+        console.log('🔛 Turning main switch ON (device activated) → Relay ON → Power Supply ON')
+        setMainSwitchOn(true)
+        await set(ref(realtimeDb, 'relay'), 'on')
+        setManualOverride(false)
+        console.log('✅ Main switch & Relay turned ON automatically - Power supply active')
+      } else {
+        // Device turned OFF - check if any other device is still ON
+        const updatedDevices = { ...devices, [deviceId]: { ...device, status: newStatus } }
+        const hasAnyDeviceOn = Object.values(updatedDevices).some(d => d.status === 'on')
+        
+        if (!hasAnyDeviceOn) {
+          // No devices are ON, turn off main switch (relay)
+          // Main switch OFF = Relay OFF = Power Supply OFF (charging stops)
+          console.log('🔴 Turning main switch OFF (no devices active) → Relay OFF → Power Supply OFF')
+          setMainSwitchOn(false)
+          await set(ref(realtimeDb, 'relay'), 'off')
+          setManualOverride(true)
+          // Reset manual override after 30 seconds
+          setTimeout(() => {
+            setManualOverride(false)
+            console.log('⏰ Timer control resumed - Ready for next timer')
+          }, 30000)
+          console.log('✅ Main switch & Relay turned OFF automatically - Power supply cut, charging stopped')
+        } else {
+          console.log('ℹ️ Other devices still active, keeping main switch ON (relay ON, power supply active)')
+        }
+      }
+      
+      console.log(`✅ Device "${device.name}" turned ${newStatus.toUpperCase()}`)
+    } catch (error) {
+      console.error('Error toggling device:', error)
+    }
+  }
+
+  // Get device icon based on type
+  const getDeviceIcon = (type) => {
+    const deviceIconMap = {
+      'bulb': 'lightbulb',
+      'fan': 'fan',
+      'tv': 'television',
+      'ac': 'air-conditioner',
+      'heater': 'radiator',
+      'charger': 'battery-charging',
+      'other': 'power-plug',
+    }
+    return deviceIconMap[type] || 'power-plug'
+  }
+
+  // Get devices that are currently ON
+  const getOnlineDevices = () => {
+    return Object.keys(devices)
+      .filter(deviceId => devices[deviceId].status === 'on')
+      .map(deviceId => ({
+        id: deviceId,
+        ...devices[deviceId]
+      }))
+  }
+
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
-        <MaterialCommunityIcons name="lightning-bolt" size={48} color="#4361EE" />
-        <Text style={styles.loadingText}>Loading your Smart Switch...</Text>
+        <MaterialCommunityIcons name="toggle-switch" size={48} color="#4361EE" />
+        <Text style={styles.loadingText}>Loading Switchly...</Text>
         <ProgressBar indeterminate color="#4361EE" style={styles.loadingBar} />
       </View>
     )
@@ -585,23 +854,52 @@ const HomeScreen = ({ navigation }) => {
         <Appbar.Header style={styles.header} transparent>
           <View style={styles.headerContent}>
             <View style={styles.headerLeft}>
-              <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
-                <MaterialCommunityIcons name="lightning-bolt" size={28} color="#FFFFFF" />
+              <Animated.View 
+                style={[
+                  styles.logoContainer,
+                  {
+                    transform: [
+                      {
+                        rotate: spinAnim.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: ['0deg', '360deg'],
+                        }),
+                      },
+                    ],
+                  },
+                ]}
+              >
+                <View style={styles.logoCircle}>
+                  <MaterialCommunityIcons name="toggle-switch" size={24} color="#FFFFFF" />
+                </View>
               </Animated.View>
-              <Text style={styles.headerTitle}>SmartSwitch</Text>
+              <Text style={styles.headerTitle}>Switchly</Text>
             </View>
             <View style={styles.headerRight}>
               <TouchableOpacity 
-                style={styles.safetyIndicator}
-                onPress={() => navigation.navigate("Safety")}
+                style={styles.smartChargingIndicator}
+                onPress={() => navigation.navigate("SmartCharging")}
               >
                 <MaterialCommunityIcons 
-                  name={getSafetyStatusIcon(safetyStatus.status)} 
+                  name="battery-charging-80" 
                   size={24} 
-                  color={getSafetyStatusColor(safetyStatus.status)} 
+                  color="#FFFFFF" 
                 />
               </TouchableOpacity>
-              <IconButton icon="bell" iconColor="#FFFFFF" onPress={() => {}} />
+              <View style={styles.notificationButton}>
+                <IconButton 
+                  icon="bell-outline" 
+                  iconColor="#FFFFFF" 
+                  onPress={() => navigation.navigate("Notifications")} 
+                />
+                {unreadNotificationCount > 0 && (
+                  <View style={styles.notificationBadge}>
+                    <Text style={styles.notificationBadgeText}>
+                      {unreadNotificationCount > 99 ? '99+' : unreadNotificationCount}
+                    </Text>
+                  </View>
+                )}
+              </View>
               <TouchableOpacity onPress={() => navigation.navigate("Profile")}>
                 <Avatar.Text size={36} label={getInitials(user?.name)} style={styles.avatar} />
               </TouchableOpacity>
@@ -622,7 +920,7 @@ const HomeScreen = ({ navigation }) => {
             <View style={styles.heroContent}>
               <Text style={styles.greetingText}>{greeting}, {user?.name || "User"}! 👋</Text>
               <View style={styles.heroSubtextContainer}>
-                <Text style={styles.heroSubtext}>Monitor and control your smart switch</Text>
+                <Text style={styles.heroSubtext}>Monitor and control your smart devices</Text>
                 <View style={styles.statusContainer}>
                   <Animated.View 
                     style={[
@@ -641,7 +939,10 @@ const HomeScreen = ({ navigation }) => {
               
               {/* Large Power Display */}
               <View style={styles.powerDisplay}>
-                <Text style={styles.powerLabel}>Current Power</Text>
+                <View style={styles.powerLabelContainer}>
+                  <MaterialCommunityIcons name="power-socket" size={18} color="rgba(255, 255, 255, 0.9)" />
+                  <Text style={styles.powerLabel}>Current Power</Text>
+                </View>
                 <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
                   <Text style={styles.powerValue}>{powerData.power.toFixed(0)}</Text>
                 </Animated.View>
@@ -702,12 +1003,97 @@ const HomeScreen = ({ navigation }) => {
             </View>
           </BlurView>
 
+          {/* Modern Glass Card for Active Devices - Only show if devices exist and have ON devices */}
+          {Object.keys(devices).length > 0 && getOnlineDevices().length > 0 && (
+            <BlurView intensity={20} tint="light" style={styles.glassCard}>
+              <View style={styles.glassCardContent}>
+                <View style={styles.cardHeader}>
+                  <MaterialCommunityIcons name="devices" size={24} color={Colors.primary} />
+                  <Text style={styles.cardTitle}>Active Devices</Text>
+                  <View style={styles.deviceCountBadge}>
+                    <Text style={styles.deviceCount}>{getOnlineDevices().length}</Text>
+                  </View>
+                </View>
+
+                {getOnlineDevices().map((device) => (
+                  <View key={device.id} style={styles.deviceItem}>
+                    <View style={styles.deviceInfo}>
+                      <View style={[styles.deviceIconContainer, { backgroundColor: Colors.success + '20' }]}>
+                        <MaterialCommunityIcons 
+                          name={getDeviceIcon(device.type)} 
+                          size={24} 
+                          color={Colors.success} 
+                        />
+                      </View>
+                      <View style={styles.deviceDetails}>
+                        <Text style={styles.deviceName}>{device.name}</Text>
+                        <Text style={styles.deviceType}>{device.type}</Text>
+                        <View style={styles.deviceStatusContainer}>
+                          <View style={[styles.deviceStatusDot, { backgroundColor: Colors.success }]} />
+                          <Text style={[styles.deviceStatusText, { color: Colors.success }]}>ON</Text>
+                        </View>
+                      </View>
+                    </View>
+                    <Switch
+                      value={true}
+                      onValueChange={() => toggleDevice(device.id)}
+                      color={Colors.primary}
+                      trackColor={{ false: Colors.border, true: Colors.success }}
+                    />
+                  </View>
+                ))}
+
+                <TouchableOpacity 
+                  style={styles.viewAllDevicesButton}
+                  onPress={() => navigation.navigate('Devices')}
+                >
+                  <Text style={styles.viewAllDevicesText}>View All Devices</Text>
+                  <MaterialCommunityIcons name="chevron-right" size={20} color={Colors.primary} />
+                </TouchableOpacity>
+              </View>
+            </BlurView>
+          )}
+
           {/* Modern Glass Card for Timer Scheduling */}
           <BlurView intensity={20} tint="light" style={styles.glassCard}>
             <View style={styles.glassCardContent}>
+              
+              {/* MASTER TIMER SWITCH - Controls all timers */}
+              <View style={[styles.masterTimerContainer, !masterTimerEnabled && styles.masterTimerDisabled]}>
+                <View style={styles.masterTimerLeft}>
+                  <MaterialCommunityIcons 
+                    name={masterTimerEnabled ? "clock-check" : "clock-alert-outline"} 
+                    size={28} 
+                    color={masterTimerEnabled ? Colors.primary : Colors.textLight} 
+                  />
+                  <View style={styles.masterTimerText}>
+                    <Text style={[styles.masterTimerTitle, !masterTimerEnabled && styles.masterTimerTitleDisabled]}>
+                      Timer System
+                    </Text>
+                    <Text style={styles.masterTimerSubtitle}>
+                      {masterTimerEnabled ? 'All timers active' : 'All timers paused'}
+                    </Text>
+                  </View>
+                </View>
+                <Switch
+                  value={masterTimerEnabled}
+                  onValueChange={async (value) => {
+                    setMasterTimerEnabled(value)
+                    const userId = auth.currentUser?.uid
+                    if (userId) {
+                      await set(ref(realtimeDb, `users/${userId}/masterTimerEnabled`), value)
+                      console.log(`🎛️ Master Timer: ${value ? 'ENABLED' : 'DISABLED'}`)
+                    }
+                  }}
+                  color={Colors.primary}
+                />
+              </View>
+
+              <View style={styles.timerDivider} />
+
               <View style={styles.cardHeader}>
                 <MaterialCommunityIcons name="timer-outline" size={24} color={Colors.primary} />
-                <Text style={styles.cardTitle}>Timer Scheduling</Text>
+                <Text style={styles.cardTitle}>Individual Timers</Text>
                 <View style={styles.timerCountBadge}>
                   <Text style={styles.timerCount}>{timers.length}</Text>
                 </View>
@@ -715,22 +1101,33 @@ const HomeScreen = ({ navigation }) => {
 
               {timers.length > 0 ? (
                 timers.map((timer) => (
-                  <View key={timer.id} style={styles.scheduleItem}>
+                  <View key={timer.id} style={[styles.scheduleItem, !masterTimerEnabled && styles.scheduleItemDisabled]}>
                     <View style={styles.scheduleHeader}>
                       <View style={styles.scheduleInfo}>
-                        <Text style={styles.scheduleName}>{timer.name}</Text>
+                        <Text style={[styles.scheduleName, !masterTimerEnabled && styles.textDisabled]}>{timer.name}</Text>
                         <View style={styles.scheduleTime}>
-                          <MaterialCommunityIcons name="clock-outline" size={16} color="#4361EE" />
-                          <Text style={styles.scheduleTimeText}>
+                          <MaterialCommunityIcons 
+                            name="clock-outline" 
+                            size={16} 
+                            color={masterTimerEnabled ? "#4361EE" : "#CCCCCC"} 
+                          />
+                          <Text style={[styles.scheduleTimeText, !masterTimerEnabled && styles.textDisabled]}>
                             {formatTime(timer.startTime)} - {formatTime(timer.endTime)}
                           </Text>
                         </View>
-                        <Text style={styles.scheduleDays}>{formatDays(timer.days)}</Text>
+                        <Text style={[styles.scheduleDays, !masterTimerEnabled && styles.textDisabled]}>
+                          {formatDays(timer.days)}
+                        </Text>
                       </View>
                       <View style={styles.scheduleActions}>
                         <Switch
-                          value={timer.enabled}
-                          onValueChange={() => toggleTimer(timer.id)}
+                          value={masterTimerEnabled ? timer.enabled : false}
+                          onValueChange={() => {
+                            if (masterTimerEnabled) {
+                              toggleTimer(timer.id)
+                            }
+                          }}
+                          disabled={!masterTimerEnabled}
                           color="#4361EE"
                           size="small"
                         />
@@ -790,7 +1187,7 @@ const HomeScreen = ({ navigation }) => {
 
           <Card style={styles.powerCard}>
             <Card.Content style={styles.metricContent}>
-              <MaterialCommunityIcons name="lightning-bolt-circle" size={24} color="#4CAF50" />
+              <MaterialCommunityIcons name="power-socket" size={24} color="#4CAF50" />
               <Text style={styles.metricValue}>{powerData.power.toFixed(2)} W</Text>
               <Text style={styles.metricLabel}>Power</Text>
               <Text style={styles.metricRange}>Today: {dailyUsage.toFixed(3)} kWh</Text>
@@ -833,117 +1230,43 @@ const HomeScreen = ({ navigation }) => {
           <Card.Content>
             <Text style={styles.cardTitle}>Real-time Power Consumption</Text>
             <View style={styles.chartContainer}>
-              <LineChart
+              <BarChart
                 data={getChartData()}
                 width={width - 60}
                 height={220}
                 chartConfig={{
-                  backgroundColor: Colors.primary,
-                  backgroundGradientFrom: Colors.primary,
-                  backgroundGradientTo: Colors.primaryDark,
+                  backgroundColor: Colors.surface,
+                  backgroundGradientFrom: '#FFFFFF',
+                  backgroundGradientTo: '#F8F9FA',
                   decimalPlaces: 1,
-                  color: (opacity = 1) => `rgba(255, 255, 255, ${opacity})`,
-                  labelColor: (opacity = 1) => `rgba(255, 255, 255, ${opacity})`,
+                  color: (opacity = 1) => Colors.primary,
+                  labelColor: (opacity = 1) => Colors.textSecondary,
                   style: {
                     borderRadius: BorderRadius.lg,
                   },
-                  propsForDots: {
-                    r: "6",
-                    strokeWidth: "2",
-                    stroke: "#FFFFFF",
+                  barPercentage: 0.7,
+                  fillShadowGradient: Colors.primary,
+                  fillShadowGradientOpacity: 0.9,
+                  propsForBackgroundLines: {
+                    strokeDasharray: "2,2",
+                    stroke: Colors.border,
+                    strokeWidth: 1,
+                  },
+                  propsForLabels: {
+                    fontSize: 11,
+                    fontWeight: '500',
                   },
                 }}
-                bezier
+                showValuesOnTopOfBars
+                withInnerLines={true}
+                withVerticalLabels={true}
+                withHorizontalLabels={true}
                 style={styles.chart}
               />
             </View>
           </Card.Content>
         </Card>
 
-        <View style={styles.quickAccessSection}>
-          <Text style={styles.sectionTitle}>Quick Access</Text>
-          <View style={styles.quickAccessGrid}>
-            <TouchableOpacity 
-              style={styles.quickAccessItem} 
-              onPress={() => navigation.navigate("Devices")}
-              activeOpacity={0.7}
-            >
-              <LinearGradient
-                colors={Gradients.primary}
-                style={styles.quickAccessIcon}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-              >
-                <MaterialCommunityIcons name="devices" size={24} color="#FFFFFF" />
-              </LinearGradient>
-              <Text style={styles.quickAccessText}>Devices</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity 
-              style={styles.quickAccessItem} 
-              onPress={() => setShowSmartTimerModal(true)}
-              activeOpacity={0.7}
-            >
-              <LinearGradient
-                colors={Gradients.warning}
-                style={styles.quickAccessIcon}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-              >
-                <MaterialCommunityIcons name="brain" size={24} color="#FFFFFF" />
-              </LinearGradient>
-              <Text style={styles.quickAccessText}>Smart Timer</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity 
-              style={styles.quickAccessItem} 
-              onPress={() => navigation.navigate("Analytics")}
-              activeOpacity={0.7}
-            >
-              <LinearGradient
-                colors={Gradients.success}
-                style={styles.quickAccessIcon}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-              >
-                <MaterialCommunityIcons name="chart-line" size={24} color="#FFFFFF" />
-              </LinearGradient>
-              <Text style={styles.quickAccessText}>Analytics</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity 
-              style={styles.quickAccessItem} 
-              onPress={() => navigation.navigate("History")}
-              activeOpacity={0.7}
-            >
-              <LinearGradient
-                colors={Gradients.danger}
-                style={styles.quickAccessIcon}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-              >
-                <MaterialCommunityIcons name="history" size={24} color="#FFFFFF" />
-              </LinearGradient>
-              <Text style={styles.quickAccessText}>History</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity 
-              style={styles.quickAccessItem} 
-              onPress={() => navigation.navigate("Safety")}
-              activeOpacity={0.7}
-            >
-              <LinearGradient
-                colors={Gradients.danger}
-                style={styles.quickAccessIcon}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-              >
-                <MaterialCommunityIcons name={getSafetyStatusIcon(safetyStatus.status)} size={24} color="#FFFFFF" />
-              </LinearGradient>
-              <Text style={styles.quickAccessText}>Safety</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
       </ScrollView>
 
       <SmartTimerModal
@@ -957,7 +1280,7 @@ const HomeScreen = ({ navigation }) => {
       <CustomAlert
         visible={deleteAlertVisible}
         onDismiss={() => setDeleteAlertVisible(false)}
-        title="SmartSwitchApp"
+        title="Switchly"
         message={`Are you sure you want to delete "${timerToDelete?.name || 'this timer'}"?`}
         type="info"
         showCancel={true}
@@ -1010,6 +1333,23 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
   },
+  logoContainer: {
+    width: 40,
+    height: 40,
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: Spacing.sm,
+  },
+  logoCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    borderWidth: 2,
+    borderColor: 'rgba(255, 255, 255, 0.4)',
+    justifyContent: "center",
+    alignItems: "center",
+  },
   headerTitle: {
     color: "#FFFFFF",
     fontSize: Typography.h3.fontSize,
@@ -1020,7 +1360,35 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
   },
+  notificationButton: {
+    position: 'relative',
+  },
+  notificationBadge: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    backgroundColor: '#FF4444',
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+  },
+  notificationBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '700',
+  },
   safetyIndicator: {
+    padding: Spacing.sm,
+    borderRadius: BorderRadius.round,
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    marginRight: Spacing.sm,
+  },
+  smartChargingIndicator: {
     padding: Spacing.sm,
     borderRadius: BorderRadius.round,
     backgroundColor: 'rgba(255, 255, 255, 0.15)',
@@ -1086,18 +1454,30 @@ const styles = StyleSheet.create({
   powerDisplay: {
     alignItems: 'center',
     marginTop: Spacing.md,
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
     paddingVertical: Spacing.lg,
     paddingHorizontal: Spacing.xl,
     borderRadius: BorderRadius.lg,
     width: '100%',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  powerLabelContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: Spacing.xs,
   },
   powerLabel: {
     fontSize: Typography.body2.fontSize,
-    color: 'rgba(255, 255, 255, 0.8)',
-    marginBottom: Spacing.xs,
+    color: 'rgba(255, 255, 255, 0.9)',
     textTransform: 'uppercase',
     letterSpacing: 1,
+    marginLeft: Spacing.xs,
   },
   powerValue: {
     fontSize: 64,
@@ -1205,6 +1585,48 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     elevation: 2,
   },
+  masterTimerContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#EEF2FF',
+    padding: Spacing.md,
+    borderRadius: BorderRadius.md,
+    marginBottom: Spacing.md,
+    borderWidth: 2,
+    borderColor: Colors.primary,
+  },
+  masterTimerDisabled: {
+    backgroundColor: '#F5F5F5',
+    borderColor: '#E0E0E0',
+  },
+  masterTimerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  masterTimerText: {
+    marginLeft: Spacing.sm,
+    flex: 1,
+  },
+  masterTimerTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: Colors.text,
+    marginBottom: 2,
+  },
+  masterTimerTitleDisabled: {
+    color: Colors.textLight,
+  },
+  masterTimerSubtitle: {
+    fontSize: 13,
+    color: Colors.textSecondary,
+  },
+  timerDivider: {
+    height: 1,
+    backgroundColor: '#E0E0E0',
+    marginVertical: Spacing.md,
+  },
   timerHeader: {
     flexDirection: "row",
     alignItems: "center",
@@ -1230,6 +1652,13 @@ const styles = StyleSheet.create({
     padding: 12,
     borderRadius: 8,
     marginBottom: 12,
+  },
+  scheduleItemDisabled: {
+    backgroundColor: "rgba(0, 0, 0, 0.03)",
+    opacity: 0.85,
+  },
+  textDisabled: {
+    color: "#999999",
   },
   scheduleHeader: {
     flexDirection: "row",
@@ -1430,51 +1859,87 @@ const styles = StyleSheet.create({
   chart: {
     borderRadius: 16,
   },
-  quickAccessSection: {
-    padding: 16,
-    marginBottom: 24,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: "bold",
-    marginBottom: 16,
-    color: "#212121",
-  },
-  quickAccessGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "space-between",
-  },
-  quickAccessItem: {
-    width: "48%",
-    backgroundColor: Colors.surface,
-    borderRadius: BorderRadius.lg,
-    padding: Spacing.md,
-    marginBottom: Spacing.md,
-    shadowColor: Shadows.md.shadowColor,
-    shadowOffset: Shadows.md.shadowOffset,
-    shadowOpacity: Shadows.md.shadowOpacity,
-    shadowRadius: Shadows.md.shadowRadius,
-    elevation: Shadows.md.elevation,
-    alignItems: "center",
-  },
-  quickAccessIcon: {
-    width: 56,
-    height: 56,
+  // Device Card Styles
+  deviceCountBadge: {
+    marginLeft: 'auto',
+    backgroundColor: Colors.primary,
     borderRadius: BorderRadius.round,
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: Spacing.sm,
-    shadowColor: Shadows.sm.shadowColor,
-    shadowOffset: Shadows.sm.shadowOffset,
-    shadowOpacity: Shadows.sm.shadowOpacity,
-    shadowRadius: Shadows.sm.shadowRadius,
-    elevation: Shadows.sm.elevation,
+    minWidth: 28,
+    height: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.xs,
   },
-  quickAccessText: {
+  deviceCount: {
     fontSize: Typography.body2.fontSize,
-    fontWeight: Typography.body2.fontWeight,
+    fontWeight: 'bold',
+    color: "#FFFFFF",
+  },
+  deviceItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: Spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(0, 0, 0, 0.05)',
+  },
+  deviceInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  deviceIconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: BorderRadius.md,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: Spacing.md,
+  },
+  deviceDetails: {
+    flex: 1,
+  },
+  deviceName: {
+    fontSize: Typography.body1.fontSize,
+    fontWeight: '600',
     color: Colors.text,
+    marginBottom: 2,
+  },
+  deviceType: {
+    fontSize: Typography.caption.fontSize,
+    color: Colors.textSecondary,
+    textTransform: 'capitalize',
+    marginBottom: 4,
+  },
+  deviceStatusContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  deviceStatusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 6,
+  },
+  deviceStatusText: {
+    fontSize: Typography.caption.fontSize,
+    fontWeight: '600',
+  },
+  viewAllDevicesButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: Spacing.md,
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    backgroundColor: 'rgba(67, 97, 238, 0.1)',
+    borderRadius: BorderRadius.md,
+  },
+  viewAllDevicesText: {
+    fontSize: Typography.body2.fontSize,
+    fontWeight: '600',
+    color: Colors.primary,
+    marginRight: Spacing.xs,
   },
 })
 

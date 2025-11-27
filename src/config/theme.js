@@ -1,4 +1,4 @@
-// Modern Theme Configuration for SmartSwitchApp
+// Modern Theme Configuration for Switchly
 // Enhanced color palette with gradients and modern design tokens
 
 export const Colors = {

@@ -18,11 +18,11 @@ import { MaterialCommunityIcons } from "@expo/vector-icons"
 const AddDeviceModal = ({ visible, onClose, onAddDevice }) => {
   const [deviceName, setDeviceName] = useState("")
   const [deviceLocation, setDeviceLocation] = useState("")
-  const [deviceType, setDeviceType] = useState("Smart Switch")
+  const [deviceType, setDeviceType] = useState("Switch")
   const [deviceIcon, setDeviceIcon] = useState("power-socket")
 
   const deviceTypes = [
-    { id: "Smart Switch", label: "Smart Switch", icon: "power-socket" },
+    { id: "Switch", label: "Switch", icon: "power-socket" },
     { id: "Smart Light", label: "Smart Light", icon: "lightbulb" },
     { id: "Smart Fan", label: "Smart Fan", icon: "fan" },
     { id: "Smart Outlet", label: "Smart Outlet", icon: "power-plug" },
@@ -69,7 +69,7 @@ const AddDeviceModal = ({ visible, onClose, onAddDevice }) => {
   const handleClose = () => {
     setDeviceName("")
     setDeviceLocation("")
-    setDeviceType("Smart Switch")
+    setDeviceType("Switch")
     setDeviceIcon("power-socket")
     onClose()
   }

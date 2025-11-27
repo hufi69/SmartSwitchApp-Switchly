@@ -180,9 +180,9 @@ const LoginScreen = ({ navigation, setIsAuthenticated }) => {
                   },
                 ]}
               >
-                <MaterialCommunityIcons name="lightning-bolt" size={48} color="#4361EE" />
+                <MaterialCommunityIcons name="toggle-switch" size={48} color="#4361EE" />
               </Animated.View>
-              <Text style={styles.title}>SmartSwitch</Text>
+              <Text style={styles.title}>Switchly</Text>
               <Text style={styles.subtitle}>Control your devices, anywhere</Text>
             </Animated.View>
 

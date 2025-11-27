@@ -37,7 +37,8 @@
     "react-native-screens": "latest",
     "react-native-vector-icons": "latest",
     "react-native-view-shot": "^4.0.3",
-    "expo-blur": "~14.1.5"
+    "expo-blur": "~14.1.5",
+    "expo-image-picker": "~16.1.4"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2"

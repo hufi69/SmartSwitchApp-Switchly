@@ -10,6 +10,7 @@ import {
   Dimensions,
   ImageBackground,
   Modal,
+  TextInput as RNTextInput,
 } from "react-native"
 import { TextInput, Button, Text, ProgressBar } from "react-native-paper"
 import { useForm, Controller } from "react-hook-form"
@@ -30,6 +31,8 @@ const SignupScreen = ({ navigation, setIsAuthenticated }) => {
   const [currentStep, setCurrentStep] = useState(1)
   const [showSuccessModal, setShowSuccessModal] = useState(false)
   const [userName, setUserName] = useState("")
+  const [passwordKey, setPasswordKey] = useState(0)
+  const [confirmPasswordKey, setConfirmPasswordKey] = useState(0)
 
   const fadeAnim = useRef(new Animated.Value(0)).current
   const slideAnim = useRef(new Animated.Value(50)).current
@@ -55,6 +58,9 @@ const SignupScreen = ({ navigation, setIsAuthenticated }) => {
     control,
     handleSubmit,
     watch,
+    setValue,
+    resetField,
+    trigger,
     formState: { errors },
   } = useForm({
     defaultValues: {
@@ -66,6 +72,20 @@ const SignupScreen = ({ navigation, setIsAuthenticated }) => {
   })
 
   const password = watch("password")
+
+  // Clear password fields when moving to step 2
+  React.useEffect(() => {
+    if (currentStep === 2) {
+      // Force clear password fields and reset keys to force re-render
+      resetField("password", { defaultValue: "" })
+      resetField("confirmPassword", { defaultValue: "" })
+      setValue("password", "", { shouldValidate: false, shouldDirty: false, shouldTouch: false })
+      setValue("confirmPassword", "", { shouldValidate: false, shouldDirty: false, shouldTouch: false })
+      // Force re-render by changing keys
+      setPasswordKey(prev => prev + 1)
+      setConfirmPasswordKey(prev => prev + 1)
+    }
+  }, [currentStep, resetField, setValue])
 
   // Calculate password strength
   React.useEffect(() => {
@@ -133,6 +153,16 @@ const SignupScreen = ({ navigation, setIsAuthenticated }) => {
       setShowSuccessModal(true)
     } catch (error) {
       setLoading(false)
+      
+      // Console logging to identify the error
+      console.error(" Firebase Auth Error Details:")
+      console.error("Error Code:", error.code)
+      console.error("Error Message:", error.message)
+      console.error("Full Error Object:", JSON.stringify(error, null, 2))
+      if (error.stack) {
+        console.error("Error Stack:", error.stack)
+      }
+      
       let errorMessage = "Sign up failed. Please try again."
 
       // Handle specific Firebase errors
@@ -149,8 +179,35 @@ const SignupScreen = ({ navigation, setIsAuthenticated }) => {
         case "auth/weak-password":
           errorMessage = "Password is too weak. Use at least 6 characters"
           break
+        case "auth/network-request-failed":
+          errorMessage = " Network Error: Please check your internet connection and try again"
+          console.error(" Network issue detected. Check:")
+          console.error("1. Internet connection is active")
+          console.error("2. Firebase project is properly configured")
+          console.error("3. No firewall blocking Firebase requests")
+          break
+        case "auth/too-many-requests":
+          errorMessage = "Too many requests. Please wait a moment and try again"
+          break
+        case "auth/internal-error":
+          errorMessage = "Internal error. Please try again in a moment"
+          break
         default:
-          errorMessage = error.message
+          // Check if it's a network-related error by message
+          if (error.message && (
+            error.message.includes("network") || 
+            error.message.includes("Network") ||
+            error.message.includes("timeout") ||
+            error.message.includes("connection") ||
+            error.message.includes("ECONNREFUSED") ||
+            error.message.includes("ENOTFOUND") ||
+            error.message.includes("Network request failed")
+          )) {
+            errorMessage = " Network Error: Please check your internet connection and try again"
+            console.error(" Network issue detected from error message")
+          } else {
+            errorMessage = error.message || "Sign up failed. Please try again."
+          }
       }
 
       showToast(errorMessage, "error")
@@ -272,9 +329,19 @@ const SignupScreen = ({ navigation, setIsAuthenticated }) => {
                     control={control}
                     rules={{
                       required: "Email is required",
-                      pattern: {
-                        value: /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i,
-                        message: "Invalid email address",
+                      validate: (value) => {
+                        if (!value) return "Email is required"
+                        if (!value.includes("@")) {
+                          return "Email must contain @ symbol"
+                        }
+                        if (!value.includes(".")) {
+                          return "Email must contain a dot (.)"
+                        }
+                        const emailRegex = /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i
+                        if (!emailRegex.test(value)) {
+                          return "Invalid email address format"
+                        }
+                        return true
                       },
                     }}
                     render={({ field: { onChange, onBlur, value } }) => (
@@ -311,16 +378,30 @@ const SignupScreen = ({ navigation, setIsAuthenticated }) => {
 
                   <Button
                     mode="contained"
-                    onPress={() => {
-                      // Validate first step before moving to step 2
-                      if (!watch("fullName") || !watch("email")) {
+                    onPress={async () => {
+                      // Trigger validation for all fields
+                      const fullNameValue = watch("fullName")
+                      const emailValue = watch("email")
+                      
+                      // Check if fields are filled
+                      if (!fullNameValue || !emailValue) {
                         showToast("Please fill in all fields", "warning")
                         return
                       }
-                      if (errors.fullName || errors.email) {
-                        showToast("Please fix the errors before continuing", "warning")
+                      
+                      // Trigger react-hook-form validation - this will validate both @ and . automatically
+                      const isFullNameValid = await trigger("fullName")
+                      const isEmailValid = await trigger("email")
+                      
+                      // If validation fails, trigger() returns false
+                      if (!isFullNameValid || !isEmailValid) {
+                        // The error message will be shown in the error text below the input
+                        // Just show a general toast
+                        showToast("Please Enter Valid Email and Full Name", "warning")
                         return
                       }
+                      
+                      // If we reach here, validation passed
                       setCurrentStep(2)
                     }}
                     style={styles.button}
@@ -344,6 +425,7 @@ const SignupScreen = ({ navigation, setIsAuthenticated }) => {
                     }}
                     render={({ field: { onChange, onBlur, value } }) => (
                       <TextInput
+                        key={`password-${currentStep}-${passwordKey}`}
                         label="Password"
                         placeholder="Enter 8 digit password"
                         mode="outlined"
@@ -357,9 +439,14 @@ const SignupScreen = ({ navigation, setIsAuthenticated }) => {
                         style={styles.input}
                         onBlur={onBlur}
                         onChangeText={onChange}
-                        value={value}
+                        value={value === undefined || value === null ? "" : String(value)}
                         secureTextEntry={secureTextEntry}
                         error={!!errors.password}
+                        autoComplete="off"
+                        autoCorrect={false}
+                        autoCapitalize="none"
+                        textContentType="newPassword"
+                        keyboardType="default"
                         outlineColor="rgba(255,255,255,0.3)"
                         activeOutlineColor="#4361EE"
                         textColor="#FFFFFF"
@@ -394,6 +481,7 @@ const SignupScreen = ({ navigation, setIsAuthenticated }) => {
                     }}
                     render={({ field: { onChange, onBlur, value } }) => (
                       <TextInput
+                        key={`confirmPassword-${currentStep}-${confirmPasswordKey}`}
                         label="Confirm Password"
                         placeholder="Confirm your password"
                         mode="outlined"
@@ -407,9 +495,14 @@ const SignupScreen = ({ navigation, setIsAuthenticated }) => {
                         style={styles.input}
                         onBlur={onBlur}
                         onChangeText={onChange}
-                        value={value}
+                        value={value === undefined || value === null ? "" : String(value)}
                         secureTextEntry={confirmSecureTextEntry}
                         error={!!errors.confirmPassword}
+                        autoComplete="off"
+                        autoCorrect={false}
+                        autoCapitalize="none"
+                        textContentType="newPassword"
+                        keyboardType="default"
                         outlineColor="rgba(255,255,255,0.3)"
                         activeOutlineColor="#4361EE"
                         textColor="#FFFFFF"
@@ -432,7 +525,9 @@ const SignupScreen = ({ navigation, setIsAuthenticated }) => {
                   <View style={styles.buttonRow}>
                     <Button
                       mode="outlined"
-                      onPress={() => setCurrentStep(1)}
+                      onPress={() => {
+                        setCurrentStep(1)
+                      }}
                       style={[styles.button, styles.backBtn]}
                       textColor="#FFFFFF"
                     >
@@ -494,10 +589,10 @@ const SignupScreen = ({ navigation, setIsAuthenticated }) => {
                   },
                 ]}
               >
-                <MaterialCommunityIcons name="lightning-bolt" size={60} color="#FFFFFF" />
+                <MaterialCommunityIcons name="toggle-switch" size={60} color="#FFFFFF" />
               </Animated.View>
 
-              <Text style={styles.successTitle}>Welcome to SmartSwitch!</Text>
+              <Text style={styles.successTitle}>Welcome to Switchly!</Text>
               <Text style={styles.successMessage}>
                 Hi {userName}! Your account has been created successfully.
               </Text>

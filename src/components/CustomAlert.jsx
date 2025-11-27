@@ -8,7 +8,7 @@ const { width } = Dimensions.get('window')
 const CustomAlert = ({ 
   visible, 
   onDismiss, 
-  title = "SmartSwitchApp", 
+  title = "Switchly", 
   message, 
   type = "info", // info, success, warning, error
   showCancel = false,
