@@ -1,5 +1,4 @@
-// Modern Theme Configuration for Switchly
-// Enhanced color palette with gradients and modern design tokens
+
 
 export const Colors = {
   // Primary Colors
@@ -162,7 +161,6 @@ export const AnimationDurations = {
   slower: 800,
 }
 
-// Common Styles (Note: Spread operators should be flattened in StyleSheet.create)
 export const CommonStyles = {
   glassCard: {
     backgroundColor: Gradients.card[0],

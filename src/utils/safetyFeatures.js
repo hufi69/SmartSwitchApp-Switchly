@@ -1,13 +1,10 @@
-// Safety features and monitoring utilities
-
-// Safety thresholds
 export const SAFETY_THRESHOLDS = {
-  MAX_VOLTAGE: 250,        // Maximum safe voltage (V)
-  MIN_VOLTAGE: 180,        // Minimum safe voltage (V)
-  MAX_CURRENT: 10,         // Maximum safe current (A)
-  MAX_POWER: 2000,         // Maximum safe power (W)
-  MAX_TEMPERATURE: 60,     // Maximum safe temperature (°C)
-  OFFLINE_TIMEOUT: 30000,  // Device offline timeout (ms)
+  MAX_VOLTAGE: 250,        
+  MIN_VOLTAGE: 180,        
+  MAX_CURRENT: 10,         
+  MAX_POWER: 2000,         
+  MAX_TEMPERATURE: 60,     
+  OFFLINE_TIMEOUT: 30000,  
 }
 
 // Safety status types
@@ -29,7 +26,7 @@ export const SAFETY_ALERTS = {
   EMERGENCY_SHUTDOWN: 'emergency_shutdown'
 }
 
-// Check voltage safety
+
 export const checkVoltageSafety = (voltage) => {
   if (voltage === 0) return { status: SAFETY_STATUS.OFFLINE, message: 'Device Offline' }
   if (voltage > SAFETY_THRESHOLDS.MAX_VOLTAGE) {

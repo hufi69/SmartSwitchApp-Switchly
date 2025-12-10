@@ -1,6 +1,5 @@
-// Sunrise/Sunset calculation utility
-// Based on NOAA Solar Calculator algorithm
 
+// Based on NOAA Solar Calculator algorithm
 const calculateSunriseSunset = (latitude, longitude, date = new Date()) => {
   // Convert to radians
   const lat = latitude * Math.PI / 180
@@ -84,5 +83,5 @@ export const getDaylightDuration = (latitude = DEFAULT_LOCATION.latitude, longit
   const sunriseMinutes = sunrise.hour * 60 + sunrise.minute
   const sunsetMinutes = sunset.hour * 60 + sunset.minute
   
-  return sunsetMinutes - sunriseMinutes // Duration in minutes
+  return sunsetMinutes - sunriseMinutes 
 }

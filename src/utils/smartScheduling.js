@@ -1,5 +1,3 @@
-// Smart scheduling utilities for enhanced automation
-
 // Pakistani holidays for 2024-2025
 const PAKISTANI_HOLIDAYS = [
   // 2024

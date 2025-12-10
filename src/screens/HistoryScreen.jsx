@@ -212,41 +212,61 @@ const HistoryScreen = ({ navigation }) => {
     const data = getCurrentData()
     
     if (data.length === 0) {
-      // Return empty chart data
+     
       return {
         labels: ['No Data'],
         datasets: [{
           data: [0],
-          color: () => "#4361EE",
+          color: () => "#CCCCCC",
           strokeWidth: 2,
         }]
       }
     }
     
     if (selectedPeriod === 'daily') {
-      const filteredData = data.filter((_, i) => i % 5 === 0)
+      // Show last 10 days or all if less than 10
+      const displayData = data.slice(0, Math.min(10, data.length))
       return {
-        labels: filteredData.map(item => item.date.getDate().toString()),
+        labels: displayData.map(item => {
+          const day = item.date.getDate()
+          const month = item.date.getMonth() + 1
+          return `${day}/${month}`
+        }),
         datasets: [{
-          data: filteredData.map(item => item.cost || 0),
+          data: displayData.map(item => parseFloat((item.cost || 0).toFixed(2))),
           color: () => "#4361EE",
           strokeWidth: 2,
         }]
       }
     } else if (selectedPeriod === 'weekly') {
+      // Show last 8 weeks or all if less
+      const displayData = data.slice(0, Math.min(8, data.length))
       return {
-        labels: data.map(item => item.week || 'Week'),
+        labels: displayData.map((item, index) => {
+          
+          if (item.week) {
+            return item.week.replace('Week ', 'W')
+          }
+          return `W${index + 1}`
+        }),
         datasets: [{
-          data: data.map(item => item.cost || 0),
+          data: displayData.map(item => parseFloat((item.cost || 0).toFixed(2))),
           color: () => "#4361EE",
           strokeWidth: 2,
         }]
       }
     } else {
+      // Show last 6 months or all if less
+      const displayData = data.slice(0, Math.min(6, data.length))
       return {
-        labels: data.map(item => item.month || 'Month'),
+        labels: displayData.map(item => {
+          if (item.month) {
+            return item.month.split(' ')[0]
+          }
+          return 'Month'
+        }),
         datasets: [{
-          data: data.map(item => item.cost || 0),
+          data: displayData.map(item => parseFloat((item.cost || 0).toFixed(2))),
           color: () => "#4361EE",
           strokeWidth: 2,
         }]
@@ -448,40 +468,63 @@ ${data.map(item => `${selectedPeriod === 'daily' ? item.date.toLocaleDateString(
         {/* Chart */}
         <Card style={styles.chartCard}>
           <Card.Content>
-            <Text style={styles.cardTitle}>Cost Trend</Text>
-            <View style={styles.chartContainer}>
-              <BarChart
-                data={getChartData()}
-                width={width - 60}
-                height={220}
-                chartConfig={{
-                  backgroundColor: "#FFFFFF",
-                  backgroundGradientFrom: "#FFFFFF",
-                  backgroundGradientTo: "#F8F9FA",
-                  decimalPlaces: 2,
-                  color: (opacity = 1) => "#4361EE",
-                  labelColor: (opacity = 1) => "#757575",
-                  style: { borderRadius: 16 },
-                  barPercentage: 0.7,
-                  fillShadowGradient: "#4361EE",
-                  fillShadowGradientOpacity: 0.9,
-                  propsForBackgroundLines: {
-                    strokeDasharray: "2,2",
-                    stroke: "#E0E0E0",
-                    strokeWidth: 1,
-                  },
-                  propsForLabels: {
-                    fontSize: 11,
-                    fontWeight: '500',
-                  },
-                }}
-                showValuesOnTopOfBars
-                withInnerLines={true}
-                withVerticalLabels={true}
-                withHorizontalLabels={true}
-                style={styles.chart}
-              />
+            <View style={styles.chartHeader}>
+              <MaterialCommunityIcons name="chart-line-variant" size={24} color="#4361EE" />
+              <Text style={styles.cardTitle}>Cost Trend</Text>
             </View>
+            {data.length > 0 ? (
+              <View style={styles.chartContainer}>
+                <BarChart
+                  data={getChartData()}
+                  width={width - 80}
+                  height={240}
+                  fromZero={true}
+                  chartConfig={{
+                    backgroundColor: "#FFFFFF",
+                    backgroundGradientFrom: "#FFFFFF",
+                    backgroundGradientTo: "#F8F9FA",
+                    decimalPlaces: 2,
+                    color: (opacity = 1) => `rgba(67, 97, 238, ${opacity})`,
+                    labelColor: (opacity = 1) => `rgba(117, 117, 117, ${opacity})`,
+                    style: { 
+                      borderRadius: 16,
+                    },
+                    barPercentage: 0.6,
+                    fillShadowGradient: "#4361EE",
+                    fillShadowGradientOpacity: 0.8,
+                    propsForBackgroundLines: {
+                      strokeDasharray: "3,3",
+                      stroke: "#E0E0E0",
+                      strokeWidth: 1,
+                    },
+                    propsForLabels: {
+                      fontSize: 10,
+                      fontWeight: '600',
+                    },
+                    formatYLabel: (value) => {
+                      const num = parseFloat(value)
+                      if (num >= 1000) return `${(num / 1000).toFixed(1)}k`
+                      if (num >= 1) return num.toFixed(1)
+                      return num.toFixed(2)
+                    },
+                  }}
+                  showValuesOnTopOfBars={true}
+                  withInnerLines={true}
+                  withVerticalLabels={true}
+                  withHorizontalLabels={true}
+                  segments={4}
+                  style={styles.chart}
+                  yAxisLabel="PKR "
+                  yAxisSuffix=""
+                />
+              </View>
+            ) : (
+              <View style={styles.chartEmptyState}>
+                <MaterialCommunityIcons name="chart-line" size={48} color="#CCCCCC" />
+                <Text style={styles.chartEmptyText}>No cost data available</Text>
+                <Text style={styles.chartEmptySubtext}>Start using Switchly to see cost trends</Text>
+              </View>
+            )}
           </Card.Content>
         </Card>
 
@@ -629,18 +672,46 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     elevation: 2,
   },
+  chartHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 16,
+  },
   cardTitle: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: "bold",
-    marginBottom: 12,
-    color: "#212121",
+    marginLeft: 8,
+    color: "#4361EE",
   },
   chartContainer: {
     alignItems: "center",
     marginTop: 8,
+    paddingVertical: 8,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 12,
+    overflow: "hidden",
   },
   chart: {
-    borderRadius: 16,
+    borderRadius: 12,
+    marginVertical: 8,
+  },
+  chartEmptyState: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 60,
+    paddingHorizontal: 20,
+  },
+  chartEmptyText: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#757575",
+    marginTop: 16,
+  },
+  chartEmptySubtext: {
+    fontSize: 14,
+    color: "#9E9E9E",
+    marginTop: 8,
+    textAlign: "center",
   },
   dataCard: {
     marginHorizontal: 16,

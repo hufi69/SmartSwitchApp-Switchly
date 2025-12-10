@@ -4,13 +4,12 @@ import * as Notifications from 'expo-notifications';
 // Check if running in Expo Go
 const isExpoGo = () => {
   try {
-    return !__DEV__ ? false : true; // Simplified check
+    return !__DEV__ ? false : true; 
   } catch {
     return false;
   }
 };
 
-// Configure notification handler (only if not Expo Go)
 try {
   Notifications.setNotificationHandler({
     handleNotification: async () => ({
@@ -22,8 +21,7 @@ try {
 } catch (error) {
   console.log('⚠️ Running in Expo Go - notifications will use fallback');
 }
-
-// Request notification permissions
+// Request notification 
 export const requestNotificationPermissions = async () => {
   try {
     const { status: existingStatus } = await Notifications.getPermissionsAsync();
@@ -35,12 +33,12 @@ export const requestNotificationPermissions = async () => {
     }
     
     if (finalStatus !== 'granted') {
-      console.log('❌ Notification permissions not granted (Expo Go limitation)');
+      console.log('Notification permissions not granted (Expo Go limitation)');
    
       return false;
     }
     
-    console.log('✅ Notification permissions granted');
+    console.log(' Notification permissions granted');
     
     // For Android, create notification channel
     if (Platform.OS === 'android') {
@@ -63,14 +61,14 @@ export const requestNotificationPermissions = async () => {
     
     return true;
   } catch (error) {
-    console.log('⚠️ Expo Go Limitation: Push notifications not supported');
-    console.log('💡 Using Alert fallback for testing');
-    console.log('✅ Notifications will work in production build');
+    console.log(' Expo Go Limitation: Push notifications not supported');
+    console.log(' Using Alert fallback for testing');
+    console.log(' Notifications will work in production build');
     return false;
   }
 };
 
-// Save notification to Firebase for notification center (Always works!)
+// Save notification to Firebase for notification center 
 const saveNotificationToFirebase = async (title, body, type) => {
   try {
     const { getAuth } = await import('firebase/auth');
@@ -92,19 +90,19 @@ const saveNotificationToFirebase = async (title, body, type) => {
       read: false,
     });
     
-    console.log('💾 Notification saved to Firebase (viewable in Notification Center)');
+    console.log(' Notification saved to Firebase (viewable in Notification Center)');
   } catch (error) {
     console.error('Error saving notification to Firebase:', error);
   }
 };
 
-// Send local push notification (with Expo Go fallback)
+// Send local push notification 
 export const sendNotification = async (title, body, data = {}) => {
-  // ALWAYS save to Firebase for notification center
+
   await saveNotificationToFirebase(title, body, data.type);
   
   try {
-    // Try to send push notification (works in production build)
+    
     await Notifications.scheduleNotificationAsync({
       content: {
         title: title,
@@ -114,12 +112,12 @@ export const sendNotification = async (title, body, data = {}) => {
         priority: Notifications.AndroidNotificationPriority.HIGH,
         vibrate: [0, 250, 250, 250],
       },
-      trigger: null, // Show immediately
+      trigger: null, 
     });
     
     console.log(`📬 Push notification sent: ${title}`);
   } catch (error) {
-    // Expo Go fallback - Show alert + save to notification center
+   
     console.log(`💾 Notification saved to center (Expo Go mode): ${title}`);
     Alert.alert(title, body, [
       { 

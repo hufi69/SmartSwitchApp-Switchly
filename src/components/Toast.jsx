@@ -25,7 +25,7 @@ const Toast = ({ visible, message, type = "error", duration = 3000, onDismiss })
         }),
       ]).start()
 
-      // Auto hide after duration
+      //  hide after duration
       const timer = setTimeout(() => {
         hideToast()
       }, duration)

@@ -31,8 +31,6 @@ import SupportChatbotScreen from "./src/screens/SupportChatbotScreen"
 
 const Stack = createStackNavigator()
 const Tab = createBottomTabNavigator()
-
-// Bottom Tab Navigator Component with Safe Area
 const MainTabNavigator = () => {
   const insets = useSafeAreaInsets()
   
@@ -216,15 +214,13 @@ export default function App() {
     }
   }
 
-  // Setup notification listeners (only in production build)
   useEffect(() => {
     try {
-      // Listener for notifications received while app is in foreground
+      
       notificationListener.current = Notifications.addNotificationReceivedListener(notification => {
         console.log('📬 Notification received:', notification.request.content.title)
       })
 
-      // Listener for when user taps on notification
       responseListener.current = Notifications.addNotificationResponseReceivedListener(response => {
         console.log('👆 User tapped notification:', response.notification.request.content.data)
       })
@@ -254,7 +250,6 @@ export default function App() {
       const savedCredentials = await getSavedCredentials()
 
       if (savedCredentials) {
-        // Auto-login with saved credentials
         console.log("Found saved credentials, attempting auto-login...")
         try {
           const userCredential = await signInWithEmailAndPassword(
@@ -277,7 +272,6 @@ export default function App() {
     }
   }
 
-  // Show loading screen while checking auth
   if (isCheckingAuth) {
     return (
       <SafeAreaProvider>

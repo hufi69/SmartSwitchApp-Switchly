@@ -15,9 +15,7 @@ import {
   IconButton,
   Switch,
   Chip,
-  Divider,
   SegmentedButtons,
-  List,
   RadioButton,
 } from "react-native-paper"
 import { MaterialCommunityIcons } from "@expo/vector-icons"
@@ -170,7 +168,7 @@ const SmartTimerModal = ({ visible, onClose, onSave, existingTimers = [] }) => {
     return date
   }
 
-  // Update time objects when text changes
+
   const updateStartTime = (text = startTimeText, period = startTimePeriod) => {
     if (validateTimeFormat(text)) {
       setStartTime(textToDate(text, period))

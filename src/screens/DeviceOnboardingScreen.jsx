@@ -25,7 +25,6 @@ const DeviceOnboardingScreen = ({ navigation, setHasDevice }) => {
   const [currentStep, setCurrentStep] = useState(1)
   const [connectionProgress, setConnectionProgress] = useState(0)
   const [isConnected, setIsConnected] = useState(false)
-
   const fadeAnim = useRef(new Animated.Value(0)).current
   const slideAnim = useRef(new Animated.Value(50)).current
   const lottieRef = useRef(null)
@@ -73,7 +72,6 @@ const DeviceOnboardingScreen = ({ navigation, setHasDevice }) => {
   const startConnectionAnimation = () => {
     setLoading(true)
 
-    // Simulate connection progress
     let progress = 0
     const interval = setInterval(() => {
       progress += 0.1
@@ -84,7 +82,6 @@ const DeviceOnboardingScreen = ({ navigation, setHasDevice }) => {
         setIsConnected(true)
         lottieRef.current?.play()
 
-        // Redirect after showing success message
         setTimeout(() => {
           setHasDevice(true)
         }, 2000)

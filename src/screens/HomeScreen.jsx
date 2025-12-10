@@ -568,24 +568,18 @@ const HomeScreen = ({ navigation }) => {
     const newStatus = !mainSwitchOn
     setMainSwitchOn(newStatus)
     
-    // Main switch directly controls relay, which controls power supply
-    // Main switch ON = Relay ON = Power Supply ON
-    // Main switch OFF = Relay OFF = Power Supply OFF (charging stops)
-    
-    // Disable manual override when turning ON manually
-    // Enable manual override only when turning OFF manually
     if (!newStatus) {
       setManualOverride(true)
-      console.log('🎛️ Manual OFF - Timer control paused → Relay OFF → Power Supply OFF')
+      console.log(' Manual OFF - Timer control paused → Relay OFF → Power Supply OFF')
       
-      // Reset manual override after 30 seconds to allow next timer
+    
       setTimeout(() => {
         setManualOverride(false)
-        console.log('⏰ Timer control resumed - Ready for next timer')
+        console.log(' Timer control resumed - Ready for next timer')
       }, 30000)
     } else {
       setManualOverride(false)
-      console.log('🎛️ Manual ON - Timer control active → Relay ON → Power Supply ON')
+      console.log(' Manual ON - Timer control active → Relay ON → Power Supply ON')
     }
 
     // Update Firebase to control ESP32 relay

@@ -22,31 +22,30 @@ const AnalyticsScreen = ({ navigation }) => {
   const [alertVisible, setAlertVisible] = useState(false)
   const [alertConfig, setAlertConfig] = useState({})
 
-  // Load user's analytics data from Firebase
   useEffect(() => {
     const userId = auth.currentUser?.uid
     if (!userId) return
 
-    console.log('📊 Loading analytics for user:', userId)
+    console.log(' Loading analytics for user:', userId)
 
     const analyticsRef = ref(realtimeDb, `users/${userId}/analytics`)
     const listener = onValue(analyticsRef, (snapshot) => {
       const data = snapshot.val()
       if (data) {
         setAnalyticsData(data)
-        console.log('✅ Analytics data loaded')
+        console.log(' Analytics data loaded')
       }
     })
 
     return () => listener()
   }, [])
 
-  // Load usage history from Firebase - Real-time updates
+
   useEffect(() => {
     const userId = auth.currentUser?.uid
     if (!userId) return
 
-    console.log('📊 Loading usage history for analytics:', userId)
+    console.log(' Loading usage history for analytics:', userId)
 
     const historyRef = ref(realtimeDb, `users/${userId}/usageHistory`)
     const listener = onValue(historyRef, (snapshot) => {
@@ -76,10 +75,10 @@ const AnalyticsScreen = ({ navigation }) => {
           .sort((a, b) => a.time - b.time) // Sort oldest first for calculations
         
         setUsageHistory(historyArray)
-        console.log(`✅ Analytics: Loaded ${historyArray.length} usage records`)
+        console.log(` Analytics: Loaded ${historyArray.length} usage records`)
       } else {
         setUsageHistory([])
-        console.log('📭 Analytics: No usage history found')
+        console.log(' Analytics: No usage history found')
       }
     })
 
@@ -158,58 +157,85 @@ const AnalyticsScreen = ({ navigation }) => {
     let filteredData = []
     let labels = []
 
+    if (usageHistory.length === 0) {
+      return {
+        labels: ['No Data'],
+        datasets: [{
+          data: [0],
+          color: () => "#CCCCCC",
+          strokeWidth: 2,
+        }]
+      }
+    }
+
     if (selectedPeriod === 'daily') {
-      // Last 24 hours, grouped by hour
+      const hourlyData = []
       for (let i = 23; i >= 0; i--) {
         const hourAgo = new Date(now.getTime() - i * 60 * 60 * 1000)
         const hourData = usageHistory.filter(item => {
           if (!item.time || !(item.time instanceof Date)) return false
           const itemHour = item.time.getHours()
           const itemDate = item.time.getDate()
-          return itemHour === hourAgo.getHours() && itemDate === hourAgo.getDate()
+          const itemMonth = item.time.getMonth()
+          const itemYear = item.time.getFullYear()
+          return itemHour === hourAgo.getHours() && 
+                 itemDate === hourAgo.getDate() &&
+                 itemMonth === hourAgo.getMonth() &&
+                 itemYear === hourAgo.getFullYear()
         })
         const avgPower = hourData.length > 0
           ? hourData.reduce((sum, item) => sum + (item.power || 0), 0) / hourData.length
           : 0
-        filteredData.push(avgPower)
-        labels.push(hourAgo.getHours() + 'h')
+        hourlyData.push({
+          hour: hourAgo.getHours(),
+          value: avgPower,
+          label: hourAgo.getHours() + 'h'
+        })
       }
+      // Show every 3 hours (0h, 3h, 6h, 9h, 12h, 15h, 18h, 21h)
+      filteredData = hourlyData.filter((_, i) => i % 3 === 0 || i === hourlyData.length - 1)
+      labels = filteredData.map(item => item.label)
+      filteredData = filteredData.map(item => parseFloat((item.value || 0).toFixed(2)))
     } else if (selectedPeriod === 'weekly') {
       // Last 7 days
       const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
       for (let i = 6; i >= 0; i--) {
         const dayAgo = new Date(now.getTime() - i * 24 * 60 * 60 * 1000)
+        dayAgo.setHours(0, 0, 0, 0)
+        const dayEnd = new Date(dayAgo)
+        dayEnd.setHours(23, 59, 59, 999)
+        
         const dayData = usageHistory.filter(item => {
           if (!item.time || !(item.time instanceof Date)) return false
-          return item.time.toDateString() === dayAgo.toDateString()
+          return item.time >= dayAgo && item.time <= dayEnd
         })
         const totalEnergy = dayData.reduce((sum, item) => sum + (item.energy || 0), 0)
         const costData = calculateLESCOCost(totalEnergy)
-        filteredData.push(costData.totalCost)
+        filteredData.push(parseFloat(costData.totalCost.toFixed(2)))
         labels.push(days[dayAgo.getDay()])
       }
     } else {
       // Monthly - Last 4 weeks
       for (let i = 3; i >= 0; i--) {
         const weekStart = new Date(now.getTime() - i * 7 * 24 * 60 * 60 * 1000)
+        weekStart.setHours(0, 0, 0, 0)
         const weekEnd = new Date(weekStart.getTime() + 7 * 24 * 60 * 60 * 1000)
+        
         const weekData = usageHistory.filter(item => {
           if (!item.time || !(item.time instanceof Date)) return false
           return item.time >= weekStart && item.time < weekEnd
         })
         const totalEnergy = weekData.reduce((sum, item) => sum + (item.energy || 0), 0)
         const costData = calculateLESCOCost(totalEnergy)
-        filteredData.push(costData.totalCost)
+        filteredData.push(parseFloat(costData.totalCost.toFixed(2)))
         labels.push(`W${4-i}`)
       }
     }
 
     return {
-      labels: selectedPeriod === 'daily' ? labels.filter((_, i) => i % 4 === 0) : labels,
+      labels: labels.length > 0 ? labels : ['No Data'],
       datasets: [{
-        data: selectedPeriod === 'daily'
-          ? filteredData.filter((_, i) => i % 4 === 0).map(v => Math.max(v || 0, 0.1))
-          : filteredData.map(v => Math.max(v || 0, 0.1)),
+        data: filteredData.length > 0 ? filteredData : [0],
         color: () => "#4361EE",
         strokeWidth: 2,
       }]
@@ -221,11 +247,11 @@ const AnalyticsScreen = ({ navigation }) => {
     let nextPeriodCost = 0
 
     if (selectedPeriod === 'daily') {
-      nextPeriodCost = current.cost * 7 // Weekly prediction
+      nextPeriodCost = current.cost * 7 
     } else if (selectedPeriod === 'weekly') {
-      nextPeriodCost = current.cost * 4 // Monthly prediction
+      nextPeriodCost = current.cost * 4 
     } else {
-      nextPeriodCost = current.cost * 12 // Yearly prediction
+      nextPeriodCost = current.cost * 12 
     }
 
     return nextPeriodCost
@@ -335,42 +361,77 @@ Cost Prediction (Next Period),${formatCurrency(getCostPrediction())}
 
           <Card style={styles.chartCard}>
             <Card.Content>
-              <Text style={styles.cardTitle}>
-                {selectedPeriod === 'daily' ? 'Hourly' : selectedPeriod === 'weekly' ? 'Daily' : 'Weekly'} Usage
-              </Text>
-              <View style={styles.chartContainer}>
-                <BarChart
-                  data={getChartData()}
-                  width={width - 60}
-                  height={220}
-                  chartConfig={{
-                    backgroundColor: "#FFFFFF",
-                    backgroundGradientFrom: "#FFFFFF",
-                    backgroundGradientTo: "#F8F9FA",
-                    decimalPlaces: 2,
-                    color: (opacity = 1) => "#4361EE",
-                    labelColor: (opacity = 1) => "#757575",
-                    style: { borderRadius: 16 },
-                    barPercentage: 0.7,
-                    fillShadowGradient: "#4361EE",
-                    fillShadowGradientOpacity: 0.9,
-                    propsForBackgroundLines: {
-                      strokeDasharray: "2,2",
-                      stroke: "#E0E0E0",
-                      strokeWidth: 1,
-                    },
-                    propsForLabels: {
-                      fontSize: 11,
-                      fontWeight: '500',
-                    },
-                  }}
-                  showValuesOnTopOfBars
-                  withInnerLines={true}
-                  withVerticalLabels={true}
-                  withHorizontalLabels={true}
-                  style={styles.chart}
+              <View style={styles.chartHeader}>
+                <MaterialCommunityIcons 
+                  name={selectedPeriod === 'daily' ? 'clock-outline' : selectedPeriod === 'weekly' ? 'calendar-week' : 'calendar-month'} 
+                  size={24} 
+                  color="#4361EE" 
                 />
+                <Text style={styles.cardTitle}>
+                  {selectedPeriod === 'daily' ? 'Hourly' : selectedPeriod === 'weekly' ? 'Daily' : 'Weekly'} Usage
+                </Text>
               </View>
+              {usageHistory.length > 0 ? (
+                <View style={styles.chartContainer}>
+                  <BarChart
+                    data={getChartData()}
+                    width={width - 80}
+                    height={240}
+                    fromZero={true}
+                    chartConfig={{
+                      backgroundColor: "#FFFFFF",
+                      backgroundGradientFrom: "#FFFFFF",
+                      backgroundGradientTo: "#F8F9FA",
+                      decimalPlaces: 2,
+                      color: (opacity = 1) => `rgba(67, 97, 238, ${opacity})`,
+                      labelColor: (opacity = 1) => `rgba(117, 117, 117, ${opacity})`,
+                      style: { 
+                        borderRadius: 16,
+                      },
+                      barPercentage: 0.6,
+                      fillShadowGradient: "#4361EE",
+                      fillShadowGradientOpacity: 0.8,
+                      propsForBackgroundLines: {
+                        strokeDasharray: "3,3",
+                        stroke: "#E0E0E0",
+                        strokeWidth: 1,
+                      },
+                      propsForLabels: {
+                        fontSize: 10,
+                        fontWeight: '600',
+                      },
+                      formatYLabel: (value) => {
+                        const num = parseFloat(value)
+                        if (selectedPeriod === 'daily') {
+                          // For power (Watts)
+                          if (num >= 1000) return `${(num / 1000).toFixed(1)}k`
+                          if (num >= 1) return num.toFixed(0)
+                          return num.toFixed(1)
+                        } else {
+                          // For cost (PKR)
+                          if (num >= 1000) return `${(num / 1000).toFixed(1)}k`
+                          if (num >= 1) return num.toFixed(1)
+                          return num.toFixed(2)
+                        }
+                      },
+                    }}
+                    showValuesOnTopOfBars={true}
+                    withInnerLines={true}
+                    withVerticalLabels={true}
+                    withHorizontalLabels={true}
+                    segments={4}
+                    style={styles.chart}
+                    yAxisLabel={selectedPeriod === 'daily' ? '' : 'PKR '}
+                    yAxisSuffix={selectedPeriod === 'daily' ? ' W' : ''}
+                  />
+                </View>
+              ) : (
+                <View style={styles.chartEmptyState}>
+                  <MaterialCommunityIcons name="chart-line" size={48} color="#CCCCCC" />
+                  <Text style={styles.chartEmptyText}>No usage data available</Text>
+                  <Text style={styles.chartEmptySubtext}>Real-time data will appear here as you use Switchly</Text>
+                </View>
+              )}
             </Card.Content>
           </Card>
 
@@ -514,18 +575,46 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     elevation: 2,
   },
+  chartHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 16,
+  },
   cardTitle: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: "bold",
-    marginBottom: 12,
-    color: "#212121",
+    marginLeft: 8,
+    color: "#4361EE",
   },
   chartContainer: {
     alignItems: "center",
     marginTop: 8,
+    paddingVertical: 8,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 12,
+    overflow: "hidden",
   },
   chart: {
-    borderRadius: 16,
+    borderRadius: 12,
+    marginVertical: 8,
+  },
+  chartEmptyState: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 60,
+    paddingHorizontal: 20,
+  },
+  chartEmptyText: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#757575",
+    marginTop: 16,
+  },
+  chartEmptySubtext: {
+    fontSize: 14,
+    color: "#9E9E9E",
+    marginTop: 8,
+    textAlign: "center",
   },
   predictionCard: {
     marginHorizontal: 16,

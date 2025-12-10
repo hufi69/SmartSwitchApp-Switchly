@@ -10,7 +10,7 @@ const CustomAlert = ({
   onDismiss, 
   title = "Switchly", 
   message, 
-  type = "info", // info, success, warning, error
+  type = "info", 
   showCancel = false,
   confirmText = "OK",
   cancelText = "Cancel",
